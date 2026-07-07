@@ -1,0 +1,21 @@
+.DS_Store
+.env
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+dist/
+node_modules/
+.idea/
+.vscode/
+
+# Local/private planning context
+QUAINY_CONTEXT.md
+PRODUCT_SOURCE_OF_TRUTH.md
+PRODUCT_REQUIREMENTS_ARCHITECTURE_ROADMAP.md
+PRODUCT_BUILD_GUARDRAILS.md
+PHASE_EXECUTION_STATUS.md

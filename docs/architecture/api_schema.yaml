@@ -1,0 +1,126 @@
+openapi: 3.1.0
+info:
+  title: Quainy Vouch API
+  version: 0.1.0
+  description: Phase 0.2 API schema draft for the source-grounded content intelligence workflow.
+paths:
+  /health:
+    get:
+      summary: Check service health.
+  /bootstrap:
+    get:
+      summary: Load the seeded local workspace for development.
+  /organizations:
+    get:
+      summary: List organization workspaces available in the local instance.
+    post:
+      summary: Create an organization workspace.
+  /organizations/{organization_id}:
+    get:
+      summary: Get an organization.
+    patch:
+      summary: Update organization metadata.
+    delete:
+      summary: Delete an organization and its dependent workspace data.
+  /organizations/{organization_id}/profile:
+    get:
+      summary: Get company memory and voice profile.
+    patch:
+      summary: Update company memory and voice profile.
+  /organizations/{organization_id}/sources:
+    get:
+      summary: List approved, disabled, and archived sources for an organization.
+    post:
+      summary: Add a manual text or markdown source.
+  /sources/{source_id}:
+    get:
+      summary: Get source metadata, raw text, chunk count, and source audit events.
+    patch:
+      summary: Update source title, status, URI, or freshness policy.
+  /sources/{source_id}/ingest:
+    post:
+      summary: Extract, normalize, hash, chunk, and store source content.
+  /organizations/{organization_id}/opportunities/generate:
+    post:
+      summary: Generate source-backed content opportunities.
+  /organizations/{organization_id}/opportunities:
+    get:
+      summary: List content opportunities.
+  /opportunities/{opportunity_id}:
+    get:
+      summary: Get an opportunity with source references.
+  /opportunities/{opportunity_id}/briefs:
+    post:
+      summary: Build a platform-independent content brief.
+  /briefs/{brief_id}:
+    get:
+      summary: Get a content brief.
+  /briefs/{brief_id}/drafts:
+    post:
+      summary: Generate platform-specific draft variants through a format adapter.
+      parameters:
+        - name: platform
+          in: query
+          schema:
+            type: string
+            default: linkedin
+        - name: content_type
+          in: query
+          schema:
+            type: string
+            default: company_post
+  /drafts/{draft_id}:
+    get:
+      summary: Get a draft and review metadata.
+    patch:
+      summary: Edit draft body.
+  /drafts/{draft_id}/reviewer-package:
+    get:
+      summary: Get draft, brief, opportunity, sources, claims, warnings, and suggested reviewer action.
+  /drafts/{draft_id}/regenerate:
+    post:
+      summary: Regenerate drafts from the same brief and adapter.
+  /drafts/{draft_id}/approve:
+    post:
+      summary: Approve a draft and store learning signal.
+  /drafts/{draft_id}/reject:
+    post:
+      summary: Reject a draft and store learning signal.
+  /drafts/{draft_id}/export:
+    post:
+      summary: Mark an approved/reviewed draft as exported and store memory.
+  /organizations/{organization_id}/memory:
+    get:
+      summary: List approved/exported/published post memory.
+  /organizations/{organization_id}/calendar:
+    get:
+      summary: List scheduled or queued drafts.
+  /organizations/{organization_id}/audit-logs:
+    get:
+      summary: Inspect auditable organization actions.
+components:
+  schemas:
+    Organization:
+      description: Company or brand workspace.
+    CompanyProfile:
+      description: Stable brand memory, voice rules, approved claims, and forbidden claims.
+    Source:
+      description: Approved or disabled information source.
+    SourceDocument:
+      description: Extracted source document version.
+    SourceChunk:
+      description: Searchable source chunk with organization and source filters.
+    ContentOpportunity:
+      description: Something worth communicating, with reason and source references.
+    ContentBrief:
+      description: Platform-independent message plan.
+    Draft:
+      description: Platform-specific generated content and review metadata.
+    Claim:
+      description: Factual or judgment claim with grounding status.
+    ApprovalDecision:
+      description: Human review decision and learning signal.
+    PostMemory:
+      description: Approved, exported, or published content used for duplicate checks and learning.
+    AuditLog:
+      description: Auditable action record.
