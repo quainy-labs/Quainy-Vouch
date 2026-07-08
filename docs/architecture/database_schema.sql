@@ -102,8 +102,11 @@ CREATE TABLE content_briefs (
     key_message TEXT NOT NULL,
     supporting_points JSONB NOT NULL DEFAULT '[]',
     claims JSONB NOT NULL DEFAULT '[]',
+    do_not_say JSONB NOT NULL DEFAULT '[]',
     source_ids JSONB NOT NULL DEFAULT '[]',
     risks JSONB NOT NULL DEFAULT '[]',
+    prompt_version TEXT NOT NULL,
+    builder_metadata JSONB NOT NULL DEFAULT '{}',
     created_at TIMESTAMPTZ NOT NULL
 );
 
@@ -117,11 +120,14 @@ CREATE TABLE drafts (
     hook TEXT,
     hashtags JSONB NOT NULL DEFAULT '[]',
     status TEXT NOT NULL DEFAULT 'needs_review',
+    source_ids JSONB NOT NULL DEFAULT '[]',
     source_map JSONB NOT NULL DEFAULT '{}',
     risk_report JSONB NOT NULL DEFAULT '[]',
     quality_report JSONB NOT NULL DEFAULT '[]',
     duplicate_report JSONB NOT NULL DEFAULT '{}',
     generation_metadata JSONB NOT NULL DEFAULT '{}',
+    scheduled_for TIMESTAMPTZ,
+    exported_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL,
     updated_at TIMESTAMPTZ NOT NULL
 );
@@ -143,7 +149,7 @@ CREATE TABLE claims (
 CREATE TABLE approval_decisions (
     id TEXT PRIMARY KEY,
     draft_id TEXT NOT NULL REFERENCES drafts(id) ON DELETE CASCADE,
-    decision TEXT NOT NULL CHECK (decision IN ('approve', 'reject', 'request_changes', 'regenerate', 'export')),
+    decision TEXT NOT NULL CHECK (decision IN ('approve', 'reject', 'request_changes', 'regenerate', 'schedule', 'export')),
     reviewer_id TEXT,
     edited_body TEXT,
     reason TEXT,

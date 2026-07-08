@@ -9,6 +9,7 @@ from app.schemas import (
     ContentBrief,
     ContentOpportunity,
     Draft,
+    DraftGenerationSpec,
     PostMemory,
     ReviewerPackage,
     Source,
@@ -81,6 +82,11 @@ class BriefBuilder(Protocol):
 class FormatAdapter(Protocol):
     platform: str
     content_type: str
+    adapter_name: str
+    adapter_version: str
+
+    def generation_spec(self, brief: ContentBrief) -> DraftGenerationSpec:
+        """Return platform/content-type rules used to generate drafts."""
 
     def variants(self) -> list[DraftVariant]:
         """Return generation variants for this platform/content type."""
@@ -94,7 +100,7 @@ class FormatAdapter(Protocol):
     ) -> RenderedDraft:
         """Render a platform-specific draft from a platform-independent brief."""
 
-    def quality_checks(self, body: str, profile: CompanyProfile) -> list[str]:
+    def quality_checks(self, body: str, profile: CompanyProfile, brief: ContentBrief) -> list[str]:
         """Return platform-specific quality and fit checks."""
 
 

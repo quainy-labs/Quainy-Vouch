@@ -5,8 +5,8 @@ import re
 from collections import Counter
 from difflib import SequenceMatcher
 
-from app.contracts import FormatAdapter
-from app.schemas import ClaimCheck, CompanyProfile, ContentBrief, ContentOpportunity, Draft, PostMemory, Source, SourceChunk
+from app.briefs import build_brief
+from app.schemas import ClaimCheck, CompanyProfile, ContentOpportunity, PostMemory, Source, SourceChunk
 
 
 STOPWORDS = {
@@ -131,62 +131,6 @@ def create_opportunities(profile: CompanyProfile, sources: list[Source], chunks:
     return opportunities
 
 
-def build_brief(profile: CompanyProfile, opportunity: ContentOpportunity, chunks: list[SourceChunk]) -> ContentBrief:
-    evidence = [chunk for chunk in chunks if chunk.source_id in opportunity.source_ids][:4]
-    supporting_points = [summarize(chunk.chunk_text, 150) for chunk in evidence]
-    claims = extract_claim_candidates(" ".join(supporting_points))[:5]
-    risks = []
-    if opportunity.confidence_score < 0.72:
-        risks.append("Context is thin; keep the draft cautious and avoid broad claims.")
-    return ContentBrief(
-        opportunity_id=opportunity.id,
-        organization_id=opportunity.organization_id,
-        objective="Share a useful, source-grounded LinkedIn company update.",
-        audience=profile.audience or "builders, founders, developers, and curious learners",
-        key_message=opportunity.title,
-        supporting_points=supporting_points,
-        claims=claims,
-        source_ids=opportunity.source_ids,
-        risks=risks,
-    )
-
-
-def generate_drafts(
-    profile: CompanyProfile,
-    brief: ContentBrief,
-    opportunity: ContentOpportunity,
-    chunks: list[SourceChunk],
-    memory: list[PostMemory],
-    adapter: FormatAdapter,
-) -> list[Draft]:
-    drafts: list[Draft] = []
-    for variant in adapter.variants():
-        rendered = adapter.render(variant, profile, brief, opportunity)
-        body = rendered.body
-        claims = check_claims(body, chunks)
-        duplicate_report = duplicate_check(body, memory)
-        risk_report = risk_check(body, profile, claims, duplicate_report, opportunity)
-        quality_report = adapter.quality_checks(body, profile)
-        source_map = {claim.text: claim.supporting_chunk_ids for claim in claims if claim.supporting_chunk_ids}
-        drafts.append(
-            Draft(
-                content_brief_id=brief.id,
-                organization_id=brief.organization_id,
-                platform=adapter.platform,
-                content_type=adapter.content_type,
-                body=body,
-                hook=rendered.hook,
-                hashtags=rendered.hashtags,
-                source_map=source_map,
-                risk_report=risk_report,
-                quality_report=quality_report,
-                duplicate_report=duplicate_report,
-                claims=claims,
-            )
-        )
-    return drafts
-
-
 def check_claims(body: str, chunks: list[SourceChunk]) -> list[ClaimCheck]:
     candidates = extract_claim_candidates(body)
     checks: list[ClaimCheck] = []
@@ -245,17 +189,31 @@ def risk_check(
 
 
 def duplicate_check(body: str, memory: list[PostMemory]) -> dict[str, object]:
+    from app.providers import build_embedding_provider, cosine_similarity
+
     fingerprint = idea_fingerprint(body)
+    embedding_provider = build_embedding_provider()
+    body_embedding = embedding_provider.embed([body])[0]
     matches = []
     best = 0.0
     for post in memory:
+        memory_embedding = embedding_provider.embed([post.final_body])[0]
         score = max(
             SequenceMatcher(None, normalize_text(body).lower(), normalize_text(post.final_body).lower()).ratio(),
             SequenceMatcher(None, fingerprint, post.idea_fingerprint).ratio(),
+            cosine_similarity(body_embedding, memory_embedding),
         )
         best = max(best, score)
         if score >= 0.55:
-            matches.append({"post_memory_id": post.id, "score": round(score, 2), "excerpt": summarize(post.final_body, 140)})
+            matches.append(
+                {
+                    "post_memory_id": post.id,
+                    "score": round(score, 2),
+                    "platform": post.platform,
+                    "content_type": post.content_type,
+                    "excerpt": summarize(post.final_body, 140),
+                }
+            )
     return {"duplicate_score": round(best, 2), "similar_posts": matches[:3]}
 
 

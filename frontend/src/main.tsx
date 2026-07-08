@@ -2,9 +2,11 @@ import React, { useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   Archive,
+  CalendarClock,
   Check,
   Clipboard,
   FileText,
+  FileCheck2,
   Library,
   Plus,
   RefreshCcw,
@@ -82,6 +84,21 @@ type Opportunity = {
   source_ids: string[];
 };
 
+type ContentBrief = {
+  id: string;
+  opportunity_id: string;
+  organization_id: string;
+  objective: string;
+  audience: string;
+  key_message: string;
+  supporting_points: string[];
+  claims: string[];
+  do_not_say: string[];
+  source_ids: string[];
+  risks: string[];
+  prompt_version: string;
+};
+
 type Claim = {
   text: string;
   support_status: string;
@@ -89,21 +106,44 @@ type Claim = {
   risk_reason?: string;
 };
 
+type ApprovalDecision = {
+  id: string;
+  draft_id: string;
+  decision: string;
+  reason?: string;
+  created_at: string;
+};
+
 type Draft = {
   id: string;
+  platform: string;
+  content_type: string;
   body: string;
   hook: string;
   status: string;
+  source_ids: string[];
+  source_map: Record<string, string[]>;
   risk_report: string[];
   quality_report: string[];
   duplicate_report: { duplicate_score: number; similar_posts: Array<{ excerpt: string; score: number }> };
   claims: Claim[];
+  generation_metadata: Record<string, unknown>;
+  scheduled_for?: string;
+  exported_at?: string;
+  updated_at: string;
 };
 
 type SourceChunk = {
   id: string;
   source_id: string;
   chunk_text: string;
+  chunk_index: number;
+};
+
+type RetrievalResult = {
+  chunk: SourceChunk;
+  source: Source;
+  score: number;
 };
 
 type ReviewerPackage = {
@@ -111,6 +151,7 @@ type ReviewerPackage = {
   opportunity: Opportunity;
   sources: Source[];
   source_chunks: SourceChunk[];
+  decision_history: ApprovalDecision[];
   suggested_action: string;
 };
 
@@ -150,6 +191,13 @@ type SourceForm = {
   freshness_days: string;
 };
 
+type FormatChoice =
+  | "linkedin_company_post"
+  | "blog_outline"
+  | "newsletter_email"
+  | "instagram_caption"
+  | "instagram_carousel_outline";
+
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE}${path}`, {
     headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
@@ -170,6 +218,37 @@ function textToList(value: string): string[] {
     .split("\n")
     .map((item) => item.trim())
     .filter(Boolean);
+}
+
+function draftFormatLabel(draft: Draft | null): string {
+  if (!draft) return "Draft";
+  if (draft.platform === "blog") return "Blog outline";
+  if (draft.platform === "newsletter") return "Newsletter email";
+  if (draft.platform === "instagram" && draft.content_type === "carousel_outline") return "Instagram carousel";
+  if (draft.platform === "instagram") return "Instagram caption";
+  return "LinkedIn company post";
+}
+
+function formatChoiceParams(choice: FormatChoice): string {
+  const params: Record<FormatChoice, string> = {
+    linkedin_company_post: "?platform=linkedin&content_type=company_post",
+    blog_outline: "?platform=blog&content_type=outline",
+    newsletter_email: "?platform=newsletter&content_type=email",
+    instagram_caption: "?platform=instagram&content_type=caption",
+    instagram_carousel_outline: "?platform=instagram&content_type=carousel_outline",
+  };
+  return params[choice];
+}
+
+function formatChoiceNotice(choice: FormatChoice): string {
+  const notices: Record<FormatChoice, string> = {
+    linkedin_company_post: "LinkedIn variants generated from the selected brief.",
+    blog_outline: "Blog outline variants generated from the selected brief.",
+    newsletter_email: "Newsletter email variants generated from the selected brief.",
+    instagram_caption: "Instagram caption variants generated from the selected brief.",
+    instagram_carousel_outline: "Instagram carousel variants generated from the selected brief.",
+  };
+  return notices[choice];
 }
 
 function setupFromBootstrap(data: Bootstrap): SetupForm {
@@ -209,12 +288,20 @@ function App() {
   const [sourceForm, setSourceForm] = useState<SourceForm>(emptySourceForm);
   const [selectedSourceId, setSelectedSourceId] = useState<string | null>(null);
   const [sourceDetail, setSourceDetail] = useState<SourceDetail | null>(null);
+  const [retrievalQuery, setRetrievalQuery] = useState("approved source context");
+  const [retrievalResults, setRetrievalResults] = useState<RetrievalResult[]>([]);
   const [opportunities, setOpportunities] = useState<Opportunity[]>([]);
+  const [opportunityMessage, setOpportunityMessage] = useState("");
   const [selectedOpportunity, setSelectedOpportunity] = useState<Opportunity | null>(null);
+  const [selectedBrief, setSelectedBrief] = useState<ContentBrief | null>(null);
   const [drafts, setDrafts] = useState<Draft[]>([]);
   const [selectedDraft, setSelectedDraft] = useState<Draft | null>(null);
   const [reviewPackage, setReviewPackage] = useState<ReviewerPackage | null>(null);
   const [editedBody, setEditedBody] = useState("");
+  const [reviewReason, setReviewReason] = useState("");
+  const [scheduleFor, setScheduleFor] = useState("");
+  const [calendarItems, setCalendarItems] = useState<Draft[]>([]);
+  const [formatChoice, setFormatChoice] = useState<FormatChoice>("linkedin_company_post");
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
 
@@ -223,6 +310,7 @@ function App() {
       setBootstrap(data);
       setSetupForm(setupFromBootstrap(data));
       setOpportunities(data.opportunities);
+      api<Draft[]>(`/organizations/${data.organization.id}/calendar`).then(setCalendarItems);
     });
   }, []);
 
@@ -234,6 +322,7 @@ function App() {
     api<ReviewerPackage>(`/drafts/${selectedDraft.id}/reviewer-package`).then((pkg) => {
       setReviewPackage(pkg);
       setEditedBody(pkg.draft.body);
+      setReviewReason("");
     });
   }, [selectedDraft]);
 
@@ -250,6 +339,8 @@ function App() {
     return `${bootstrap.sources.length} approved sources`;
   }, [bootstrap]);
 
+  const approvalBlocked = reviewPackage?.suggested_action.toLowerCase().includes("unsupported claims") ?? false;
+
   if (!bootstrap) {
     return <main className="loading">Quainy Vouch</main>;
   }
@@ -257,12 +348,14 @@ function App() {
   async function generateOpportunities() {
     if (!bootstrap) return;
     setBusy(true);
-    const result = await api<{ opportunities: Opportunity[] }>(
+    const result = await api<{ opportunities: Opportunity[]; message?: string }>(
       `/organizations/${bootstrap.organization.id}/opportunities/generate`,
       { method: "POST" },
     );
     setOpportunities(result.opportunities);
+    setOpportunityMessage(result.message ?? (result.opportunities.length ? "Opportunities generated from approved source context." : ""));
     setSelectedOpportunity(result.opportunities[0] ?? null);
+    setSelectedBrief(null);
     setDrafts([]);
     setSelectedDraft(null);
     setBusy(false);
@@ -302,6 +395,9 @@ function App() {
       const nextBootstrap = { ...bootstrap, organization, profile };
       setBootstrap(nextBootstrap);
       setSetupForm(setupFromBootstrap(nextBootstrap));
+      setSelectedBrief(null);
+      setDrafts([]);
+      setSelectedDraft(null);
       setNotice("Workspace and voice profile saved.");
     } finally {
       setBusy(false);
@@ -335,6 +431,9 @@ function App() {
       });
       setSourceForm(emptySourceForm);
       await refreshSources(source.id);
+      setSelectedBrief(null);
+      setDrafts([]);
+      setSelectedDraft(null);
       setNotice("Source added to the approved knowledge library.");
     } finally {
       setBusy(false);
@@ -349,7 +448,24 @@ function App() {
         body: JSON.stringify({ approval_status: approvalStatus }),
       });
       await refreshSources(sourceId);
+      setSelectedBrief(null);
+      setDrafts([]);
+      setSelectedDraft(null);
       setNotice(`Source marked ${approvalStatus}.`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function refreshSource(sourceId: string) {
+    setBusy(true);
+    try {
+      await api(`/sources/${sourceId}/refresh`, { method: "POST" });
+      await refreshSources(sourceId);
+      setSelectedBrief(null);
+      setDrafts([]);
+      setSelectedDraft(null);
+      setNotice("Source refreshed and re-ingested.");
     } finally {
       setBusy(false);
     }
@@ -366,6 +482,21 @@ function App() {
       uri: file.name,
       raw_text: rawText,
     });
+  }
+
+  async function runRetrieval() {
+    if (!bootstrap || retrievalQuery.trim().length < 2) return;
+    setBusy(true);
+    try {
+      const results = await api<RetrievalResult[]>(`/organizations/${bootstrap.organization.id}/retrieval/query`, {
+        method: "POST",
+        body: JSON.stringify({ query: retrievalQuery, limit: 5 }),
+      });
+      setRetrievalResults(results);
+      setNotice(results.length ? "Retrieved approved source chunks." : "No approved source chunks matched that query.");
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function createWorkspaceFromSetup() {
@@ -403,49 +534,111 @@ function App() {
       setBootstrap(nextBootstrap);
       setSetupForm(setupFromBootstrap(nextBootstrap));
       setOpportunities([]);
+      setOpportunityMessage("");
       setSelectedOpportunity(null);
+      setSelectedBrief(null);
       setDrafts([]);
       setSelectedDraft(null);
-      setNotice("New workspace created. Add sources in the next sprint.");
+      setNotice("New workspace created. Add approved sources to start generating opportunities.");
     } finally {
       setBusy(false);
     }
   }
 
-  async function generateDrafts(opportunity: Opportunity) {
+  async function createBrief(opportunity: Opportunity) {
     setBusy(true);
-    setSelectedOpportunity(opportunity);
-    const brief = await api<{ id: string }>(`/opportunities/${opportunity.id}/briefs`, { method: "POST" });
-    const result = await api<{ drafts: Draft[] }>(`/briefs/${brief.id}/drafts`, { method: "POST" });
-    setDrafts(result.drafts);
-    setSelectedDraft(result.drafts[0] ?? null);
-    setBusy(false);
+    try {
+      setSelectedOpportunity(opportunity);
+      setDrafts([]);
+      setSelectedDraft(null);
+      const brief = await api<ContentBrief>(`/opportunities/${opportunity.id}/briefs`, { method: "POST" });
+      setSelectedBrief(brief);
+      setNotice("Brief created from approved source context.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function generateDraftsFromBrief() {
+    if (!selectedBrief) return;
+    setBusy(true);
+    try {
+      const params = formatChoiceParams(formatChoice);
+      const result = await api<{ drafts: Draft[] }>(`/briefs/${selectedBrief.id}/drafts${params}`, { method: "POST" });
+      setDrafts(result.drafts);
+      setSelectedDraft(result.drafts[0] ?? null);
+      setNotice(formatChoiceNotice(formatChoice));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function regenerateSelectedDraft() {
+    if (!selectedDraft) return;
+    setBusy(true);
+    try {
+      const result = await api<{ drafts: Draft[] }>(`/drafts/${selectedDraft.id}/regenerate`, { method: "POST" });
+      setDrafts(result.drafts);
+      setSelectedDraft(result.drafts[0] ?? null);
+      setNotice("Drafts regenerated from the same brief and adapter.");
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function approveDraft() {
     if (!selectedDraft) return;
     setBusy(true);
-    await api(`/drafts/${selectedDraft.id}/approve`, {
-      method: "POST",
-      body: JSON.stringify({ edited_body: editedBody, reason: "Approved in local review desk" }),
-    });
-    const updated = await api<Draft>(`/drafts/${selectedDraft.id}`);
-    setSelectedDraft(updated);
-    setNotice("Approved and stored in memory.");
-    setBusy(false);
+    try {
+      await api(`/drafts/${selectedDraft.id}/approve`, {
+        method: "POST",
+        body: JSON.stringify({ edited_body: editedBody, reason: reviewReason || "Approved in review desk" }),
+      });
+      const updated = await api<Draft>(`/drafts/${selectedDraft.id}`);
+      setSelectedDraft(updated);
+      setDrafts((current) => current.map((draft) => (draft.id === updated.id ? updated : draft)));
+      await refreshCalendar();
+      setNotice("Approved and stored in memory.");
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Approval failed.");
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function rejectDraft() {
     if (!selectedDraft) return;
     setBusy(true);
-    await api(`/drafts/${selectedDraft.id}/reject`, {
-      method: "POST",
-      body: JSON.stringify({ edited_body: editedBody, reason: "Needs stronger source support" }),
-    });
-    const updated = await api<Draft>(`/drafts/${selectedDraft.id}`);
-    setSelectedDraft(updated);
-    setNotice("Rejected with review signal.");
-    setBusy(false);
+    try {
+      await api(`/drafts/${selectedDraft.id}/reject`, {
+        method: "POST",
+        body: JSON.stringify({ edited_body: editedBody, reason: reviewReason }),
+      });
+      const updated = await api<Draft>(`/drafts/${selectedDraft.id}`);
+      setSelectedDraft(updated);
+      setDrafts((current) => current.map((draft) => (draft.id === updated.id ? updated : draft)));
+      setNotice("Rejected with review signal.");
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Rejection failed.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function saveDraftEdit() {
+    if (!selectedDraft) return;
+    setBusy(true);
+    try {
+      const updated = await api<Draft>(`/drafts/${selectedDraft.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ body: editedBody }),
+      });
+      setSelectedDraft(updated);
+      setDrafts((current) => current.map((draft) => (draft.id === updated.id ? updated : draft)));
+      setNotice("Draft edit saved and review checks refreshed.");
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function exportDraft() {
@@ -462,10 +655,38 @@ function App() {
       }
       const updated = await api<Draft>(`/drafts/${selectedDraft.id}`);
       setSelectedDraft(updated);
+      setDrafts((current) => current.map((draft) => (draft.id === updated.id ? updated : draft)));
+      await refreshCalendar();
       setNotice(copied ? "Exported and copied." : "Exported. Clipboard permission was unavailable.");
     } finally {
       setBusy(false);
     }
+  }
+
+  async function scheduleDraft() {
+    if (!selectedDraft || !scheduleFor) return;
+    setBusy(true);
+    try {
+      await api(`/drafts/${selectedDraft.id}/schedule`, {
+        method: "POST",
+        body: JSON.stringify({
+          scheduled_for: new Date(scheduleFor).toISOString(),
+          reason: reviewReason || "Manual queue intent",
+        }),
+      });
+      const updated = await api<Draft>(`/drafts/${selectedDraft.id}`);
+      setSelectedDraft(updated);
+      setDrafts((current) => current.map((draft) => (draft.id === updated.id ? updated : draft)));
+      await refreshCalendar();
+      setNotice("Scheduled intent saved to the queue.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function refreshCalendar() {
+    if (!bootstrap) return;
+    setCalendarItems(await api<Draft[]>(`/organizations/${bootstrap.organization.id}/calendar`));
   }
 
   return (
@@ -681,6 +902,9 @@ function App() {
                       <option value="manual_note">Manual note</option>
                       <option value="markdown">Markdown</option>
                       <option value="text">Text</option>
+                      <option value="url">URL page</option>
+                      <option value="github_release">GitHub release</option>
+                      <option value="notion_page">Notion page</option>
                     </select>
                   </Field>
                   <Field label="Status">
@@ -738,6 +962,9 @@ function App() {
                           {status}
                         </button>
                       ))}
+                      <button onClick={() => refreshSource(sourceDetail.source.id)} disabled={busy}>
+                        refresh
+                      </button>
                     </div>
                     <div className="source-meta">
                       <span>{sourceDetail.source.source_type}</span>
@@ -763,6 +990,37 @@ function App() {
                 )}
               </section>
             </div>
+            <section className="retrieval-inspector">
+              <div className="section-heading compact-heading">
+                <div>
+                  <p className="eyebrow">Retrieval</p>
+                  <h3>Approved-source search</h3>
+                </div>
+                <button className="icon-button" onClick={runRetrieval} disabled={busy || retrievalQuery.trim().length < 2} title="Search approved context">
+                  <RefreshCcw size={18} />
+                  <span>Search</span>
+                </button>
+              </div>
+              <div className="retrieval-query-row">
+                <input value={retrievalQuery} onChange={(event) => setRetrievalQuery(event.target.value)} />
+              </div>
+              <div className="retrieval-results">
+                {retrievalResults.length > 0 ? (
+                  retrievalResults.map((result) => (
+                    <article className="retrieval-result" key={result.chunk.id}>
+                      <div>
+                        <strong>{result.source.title}</strong>
+                        <span>chunk {result.chunk.chunk_index + 1}</span>
+                        <span>{Math.round(result.score * 100)}%</span>
+                      </div>
+                      <p>{result.chunk.chunk_text}</p>
+                    </article>
+                  ))
+                ) : (
+                  <p className="empty-results">Run a query to verify which approved chunks retrieval can use.</p>
+                )}
+              </div>
+            </section>
           </section>
 
           <section className="panel band">
@@ -777,26 +1035,88 @@ function App() {
               </button>
             </div>
             <div className="opportunity-grid">
-              {opportunities.map((opportunity) => (
-                <button
-                  className={`opportunity-card ${selectedOpportunity?.id === opportunity.id ? "selected" : ""}`}
-                  key={opportunity.id}
-                  onClick={() => generateDrafts(opportunity)}
-                >
-                  <span className="score">{Math.round(opportunity.relevance_score * 100)}%</span>
-                  <h3>{opportunity.title}</h3>
-                  <p>{opportunity.reason_today}</p>
-                </button>
-              ))}
+              {opportunities.length > 0 ? (
+                opportunities.map((opportunity) => (
+                  <button
+                    className={`opportunity-card ${selectedOpportunity?.id === opportunity.id ? "selected" : ""}`}
+                    key={opportunity.id}
+                    onClick={() => createBrief(opportunity)}
+                  >
+                    <div className="opportunity-scores">
+                      <span className="score">{Math.round(opportunity.relevance_score * 100)}% relevant</span>
+                      <span>{Math.round(opportunity.freshness_score * 100)}% fresh</span>
+                      <span>{opportunity.source_ids.length} source{opportunity.source_ids.length === 1 ? "" : "s"}</span>
+                    </div>
+                    <h3>{opportunity.title}</h3>
+                    <p>{opportunity.reason_today}</p>
+                  </button>
+                ))
+              ) : (
+                <div className="empty-opportunities">
+                  <Sparkles size={22} />
+                  <p>{opportunityMessage || "Generate opportunities after adding enough approved source context."}</p>
+                </div>
+              )}
             </div>
+            {opportunityMessage && opportunities.length > 0 && <p className="notice">{opportunityMessage}</p>}
           </section>
+
+          {selectedBrief && (
+            <section className="panel band brief-panel">
+              <div className="section-heading">
+                <div>
+                  <p className="eyebrow">Brief</p>
+                  <h2>Platform-independent source brief</h2>
+                </div>
+                <div className="format-actions">
+                  <select value={formatChoice} onChange={(event) => setFormatChoice(event.target.value as FormatChoice)}>
+                    <option value="linkedin_company_post">LinkedIn post</option>
+                    <option value="blog_outline">Blog outline</option>
+                    <option value="newsletter_email">Newsletter email</option>
+                    <option value="instagram_caption">Instagram caption</option>
+                    <option value="instagram_carousel_outline">Instagram carousel</option>
+                  </select>
+                  <button className="icon-button primary" onClick={generateDraftsFromBrief} disabled={busy} title="Generate drafts">
+                    <FileCheck2 size={18} />
+                    <span>Generate drafts</span>
+                  </button>
+                </div>
+              </div>
+              <div className="brief-grid">
+                <section className="brief-summary">
+                  <span>Objective</span>
+                  <p>{selectedBrief.objective}</p>
+                  <span>Audience</span>
+                  <p>{selectedBrief.audience}</p>
+                  <span>Key message</span>
+                  <p>{selectedBrief.key_message}</p>
+                </section>
+                <section className="brief-list">
+                  <h3>Supporting points</h3>
+                  <ul className="plain-list">
+                    {selectedBrief.supporting_points.map((point) => (
+                      <li key={point}>{point}</li>
+                    ))}
+                  </ul>
+                </section>
+                <section className="brief-list">
+                  <h3>Guardrails</h3>
+                  <ul className="plain-list">
+                    {[...selectedBrief.do_not_say, ...selectedBrief.risks].map((item) => (
+                      <li key={item}>{item}</li>
+                    ))}
+                  </ul>
+                </section>
+              </div>
+            </section>
+          )}
 
           {drafts.length > 0 && (
             <section className="panel band">
               <div className="section-heading">
                 <div>
                   <p className="eyebrow">Drafts</p>
-                  <h2>LinkedIn company post</h2>
+                  <h2>{draftFormatLabel(selectedDraft)}</h2>
                 </div>
                 <Sparkles size={20} />
               </div>
@@ -811,6 +1131,14 @@ function App() {
                   </button>
                 ))}
               </div>
+              {selectedDraft && (
+                <div className="draft-meta-row">
+                  <span>{String(selectedDraft.generation_metadata.adapter_name ?? selectedDraft.platform ?? "adapter")}</span>
+                  <span>{String(selectedDraft.generation_metadata.prompt_version ?? "prompt tracked")}</span>
+                  <span>{selectedDraft.source_ids.length} source{selectedDraft.source_ids.length === 1 ? "" : "s"}</span>
+                  <span>{Object.keys(selectedDraft.source_map).length} source map candidate{Object.keys(selectedDraft.source_map).length === 1 ? "" : "s"}</span>
+                </div>
+              )}
             </section>
           )}
 
@@ -825,12 +1153,29 @@ function App() {
                   <span className="review-status">{reviewPackage.suggested_action}</span>
                 </div>
                 <textarea value={editedBody} onChange={(event) => setEditedBody(event.target.value)} />
+                <div className="review-reason-row">
+                  <input
+                    value={reviewReason}
+                    onChange={(event) => setReviewReason(event.target.value)}
+                    placeholder="Decision note or rejection reason"
+                  />
+                  <input type="datetime-local" value={scheduleFor} onChange={(event) => setScheduleFor(event.target.value)} />
+                </div>
                 <div className="action-row">
-                  <button className="icon-button primary" onClick={approveDraft} disabled={busy} title="Approve draft">
+                  <button className="icon-button" onClick={saveDraftEdit} disabled={busy || editedBody === selectedDraft.body} title="Save edit">
+                    <Save size={18} />
+                    <span>Save edit</span>
+                  </button>
+                  <button
+                    className="icon-button primary"
+                    onClick={approveDraft}
+                    disabled={busy || approvalBlocked}
+                    title={approvalBlocked ? "Resolve unsupported claims before approval" : "Approve draft"}
+                  >
                     <Check size={18} />
                     <span>Approve</span>
                   </button>
-                  <button className="icon-button" onClick={rejectDraft} disabled={busy} title="Reject draft">
+                  <button className="icon-button" onClick={rejectDraft} disabled={busy || !reviewReason.trim()} title="Reject draft">
                     <X size={18} />
                     <span>Reject</span>
                   </button>
@@ -838,10 +1183,14 @@ function App() {
                     <Clipboard size={18} />
                     <span>Export</span>
                   </button>
+                  <button className="icon-button" onClick={scheduleDraft} disabled={busy || !scheduleFor} title="Schedule intent">
+                    <CalendarClock size={18} />
+                    <span>Schedule</span>
+                  </button>
                   <button
                     className="icon-button"
-                    onClick={() => selectedOpportunity && generateDrafts(selectedOpportunity)}
-                    disabled={busy}
+                    onClick={regenerateSelectedDraft}
+                    disabled={busy || !selectedDraft}
                     title="Regenerate drafts"
                   >
                     <Send size={18} />
@@ -854,6 +1203,35 @@ function App() {
               <aside className="evidence-column">
                 <InsightList title="Risk" icon={<Archive size={17} />} items={selectedDraft.risk_report} />
                 <InsightList title="Quality" icon={<ShieldCheck size={17} />} items={selectedDraft.quality_report} />
+                {selectedDraft.duplicate_report.similar_posts.length > 0 && (
+                  <section className="panel compact">
+                    <div className="panel-title">
+                      <RefreshCcw size={17} />
+                      <h2>Similar Memory</h2>
+                    </div>
+                    {selectedDraft.duplicate_report.similar_posts.map((post) => (
+                      <div className="memory-match" key={post.excerpt}>
+                        <strong>{Math.round(post.score * 100)}% similar</strong>
+                        <p>{post.excerpt}</p>
+                      </div>
+                    ))}
+                  </section>
+                )}
+                {reviewPackage.decision_history.length > 0 && (
+                  <section className="panel compact">
+                    <div className="panel-title">
+                      <ShieldCheck size={17} />
+                      <h2>Decision History</h2>
+                    </div>
+                    {reviewPackage.decision_history.map((decision) => (
+                      <div className="decision-row" key={decision.id}>
+                        <strong>{decision.decision}</strong>
+                        <span>{new Date(decision.created_at).toLocaleString()}</span>
+                        {decision.reason && <p>{decision.reason}</p>}
+                      </div>
+                    ))}
+                  </section>
+                )}
                 <section className="panel compact">
                   <div className="panel-title">
                     <FileText size={17} />
@@ -882,6 +1260,38 @@ function App() {
               </aside>
             </section>
           )}
+
+          <section className="panel band">
+            <div className="section-heading">
+              <div>
+                <p className="eyebrow">Queue</p>
+                <h2>Approved and upcoming posts</h2>
+              </div>
+              <CalendarClock size={20} />
+            </div>
+            <div className="queue-list">
+              {calendarItems.length > 0 ? (
+                calendarItems.map((item) => (
+                  <article className="queue-row" key={item.id}>
+                    <div>
+                      <strong>{item.hook || item.body.slice(0, 80)}</strong>
+                      <span>{item.status}</span>
+                    </div>
+                    <p>{item.body}</p>
+                    <small>
+                      {item.scheduled_for
+                        ? `Scheduled ${new Date(item.scheduled_for).toLocaleString()}`
+                        : item.exported_at
+                          ? `Exported ${new Date(item.exported_at).toLocaleString()}`
+                          : `Updated ${new Date(item.updated_at).toLocaleString()}`}
+                    </small>
+                  </article>
+                ))
+              ) : (
+                <p className="empty-results">Approved, scheduled, and exported drafts will appear here.</p>
+              )}
+            </div>
+          </section>
         </section>
       </section>
     </main>

@@ -1,0 +1,30 @@
+[
+  {
+    "id": "golden_source_backed_flow",
+    "description": "Seeded Quainy workspace can generate reviewable source-backed drafts.",
+    "kind": "source_backed_flow",
+    "expected": {
+      "minimum_drafts": 3,
+      "requires_sources": true,
+      "requires_generation_metadata": true
+    }
+  },
+  {
+    "id": "golden_unsupported_metric_block",
+    "description": "A reviewer edit that invents a high-risk metric is flagged and blocked from approval.",
+    "kind": "unsupported_metric_block",
+    "expected": {
+      "approval_status": 409,
+      "risk_contains": "Unsupported factual claim"
+    }
+  },
+  {
+    "id": "golden_duplicate_memory",
+    "description": "Approved memory creates duplicate warnings for future similar drafts.",
+    "kind": "duplicate_memory",
+    "expected": {
+      "minimum_duplicate_score": 0.72,
+      "minimum_similar_posts": 1
+    }
+  }
+]

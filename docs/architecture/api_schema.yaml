@@ -31,7 +31,7 @@ paths:
     get:
       summary: List approved, disabled, and archived sources for an organization.
     post:
-      summary: Add a manual text or markdown source.
+      summary: Add a manual text, markdown, selected URL page, selected public GitHub release, or selected Notion page source.
   /sources/{source_id}:
     get:
       summary: Get source metadata, raw text, chunk count, and source audit events.
@@ -40,6 +40,12 @@ paths:
   /sources/{source_id}/ingest:
     post:
       summary: Extract, normalize, hash, chunk, and store source content.
+  /sources/{source_id}/refresh:
+    post:
+      summary: Re-ingest a selected source and create a new source document version when content changes.
+  /organizations/{organization_id}/retrieval/query:
+    post:
+      summary: Retrieve approved organization-scoped source chunks for a query.
   /organizations/{organization_id}/opportunities/generate:
     post:
       summary: Generate source-backed content opportunities.
@@ -61,11 +67,13 @@ paths:
       parameters:
         - name: platform
           in: query
+          description: Format adapter platform, such as `linkedin`, `blog`, `newsletter`, or `instagram`.
           schema:
             type: string
             default: linkedin
         - name: content_type
           in: query
+          description: Format adapter content type, such as `company_post`, `outline`, `email`, `caption`, or `carousel_outline`.
           schema:
             type: string
             default: company_post
@@ -89,12 +97,15 @@ paths:
   /drafts/{draft_id}/export:
     post:
       summary: Mark an approved/reviewed draft as exported and store memory.
+  /drafts/{draft_id}/schedule:
+    post:
+      summary: Assign a manual scheduled date/time intent for an approved or reviewable draft.
   /organizations/{organization_id}/memory:
     get:
       summary: List approved/exported/published post memory.
   /organizations/{organization_id}/calendar:
     get:
-      summary: List scheduled or queued drafts.
+      summary: List approved, scheduled, and exported drafts in the manual queue.
   /organizations/{organization_id}/audit-logs:
     get:
       summary: Inspect auditable organization actions.

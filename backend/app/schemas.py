@@ -3,9 +3,10 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any
+from urllib.parse import urlparse
 from uuid import uuid4
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 def now_utc() -> datetime:
@@ -27,12 +28,14 @@ class DraftStatus(str, Enum):
     needs_review = "needs_review"
     approved = "approved"
     rejected = "rejected"
+    scheduled = "scheduled"
     exported = "exported"
 
 
 class Decision(str, Enum):
     approve = "approve"
     reject = "reject"
+    schedule = "schedule"
     export = "export"
     regenerate = "regenerate"
 
@@ -140,10 +143,30 @@ class SourceCreate(BaseModel):
             raise ValueError("Value cannot be blank")
         return cleaned
 
+    @model_validator(mode="after")
+    def validate_uri_source(self) -> "SourceCreate":
+        if self.source_type == "url":
+            parsed = urlparse(self.uri or "")
+            if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+                raise ValueError("URL sources require a single http(s) page URI")
+        if self.source_type == "github_release":
+            parsed = urlparse(self.uri or "")
+            parts = [part for part in parsed.path.split("/") if part]
+            if parsed.scheme not in {"http", "https"} or parsed.netloc.lower() != "github.com" or len(parts) < 2:
+                raise ValueError("GitHub release sources require a selected public github.com owner/repo URI")
+        if self.source_type == "notion_page":
+            parsed = urlparse(self.uri or "")
+            notion_page_uri = parsed.scheme == "notion" and parsed.netloc == "page" and bool(parsed.path.strip("/"))
+            notion_web_uri = parsed.scheme in {"http", "https"} and parsed.netloc.endswith("notion.so")
+            if not notion_page_uri and not notion_web_uri:
+                raise ValueError("Notion sources require a selected page URI")
+        return self
+
 
 class SourceUpdate(BaseModel):
     title: str | None = Field(default=None, min_length=1)
     uri: str | None = None
+    raw_text: str | None = Field(default=None, min_length=20)
     approval_status: SourceStatus | None = None
     freshness_days: int | None = None
 
@@ -155,6 +178,16 @@ class SourceUpdate(BaseModel):
         cleaned = value.strip()
         if not cleaned:
             raise ValueError("Value cannot be blank")
+        return cleaned
+
+    @field_validator("raw_text")
+    @classmethod
+    def clean_optional_raw_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        cleaned = value.strip()
+        if len(cleaned) < 20:
+            raise ValueError("Raw text must contain at least 20 characters")
         return cleaned
 
 
@@ -178,13 +211,46 @@ class SourceDetail(BaseModel):
     audit_logs: list["AuditLog"] = Field(default_factory=list)
 
 
+class SourceDocument(BaseModel):
+    id: str = Field(default_factory=lambda: new_id("doc"))
+    source_id: str
+    title: str
+    raw_text: str
+    normalized_text: str
+    content_hash: str
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime = Field(default_factory=now_utc)
+
+
 class SourceChunk(BaseModel):
     id: str = Field(default_factory=lambda: new_id("chk"))
+    source_document_id: str | None = None
     source_id: str
     organization_id: str
     chunk_text: str
     chunk_index: int
+    embedding: list[float] | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime = Field(default_factory=now_utc)
+
+
+class RetrievalQuery(BaseModel):
+    query: str = Field(min_length=2)
+    limit: int = Field(default=6, ge=1, le=20)
+
+    @field_validator("query")
+    @classmethod
+    def clean_query(cls, value: str) -> str:
+        cleaned = value.strip()
+        if len(cleaned) < 2:
+            raise ValueError("Query must contain at least two characters")
+        return cleaned
+
+
+class RetrievalResult(BaseModel):
+    chunk: SourceChunk
+    source: Source
+    score: float
 
 
 class ContentOpportunity(BaseModel):
@@ -210,8 +276,24 @@ class ContentBrief(BaseModel):
     key_message: str
     supporting_points: list[str]
     claims: list[str]
+    do_not_say: list[str] = Field(default_factory=list)
     source_ids: list[str]
     risks: list[str] = Field(default_factory=list)
+    prompt_version: str = "brief_builder.v1"
+    builder_metadata: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime = Field(default_factory=now_utc)
+
+
+class DraftGenerationSpec(BaseModel):
+    id: str = Field(default_factory=lambda: new_id("spec"))
+    content_brief_id: str
+    platform: str
+    content_type: str
+    adapter_name: str
+    adapter_version: str
+    prompt_version: str
+    rules: list[str]
+    metadata: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime = Field(default_factory=now_utc)
 
 
@@ -234,11 +316,15 @@ class Draft(BaseModel):
     hook: str
     hashtags: list[str] = Field(default_factory=list)
     status: DraftStatus = DraftStatus.needs_review
+    source_ids: list[str] = Field(default_factory=list)
     source_map: dict[str, list[str]] = Field(default_factory=dict)
     risk_report: list[str] = Field(default_factory=list)
     quality_report: list[str] = Field(default_factory=list)
     duplicate_report: dict[str, Any] = Field(default_factory=dict)
     claims: list[ClaimCheck] = Field(default_factory=list)
+    generation_metadata: dict[str, Any] = Field(default_factory=dict)
+    scheduled_for: datetime | None = None
+    exported_at: datetime | None = None
     created_at: datetime = Field(default_factory=now_utc)
     updated_at: datetime = Field(default_factory=now_utc)
 
@@ -249,6 +335,11 @@ class DraftCreateResult(BaseModel):
 
 class DraftUpdate(BaseModel):
     body: str
+
+
+class DraftScheduleCreate(BaseModel):
+    scheduled_for: datetime
+    reason: str | None = None
 
 
 class ReviewDecisionCreate(BaseModel):
@@ -299,4 +390,5 @@ class ReviewerPackage(BaseModel):
     opportunity: ContentOpportunity
     sources: list[Source]
     source_chunks: list[SourceChunk]
+    decision_history: list[ApprovalDecision] = Field(default_factory=list)
     suggested_action: str
