@@ -99,6 +99,41 @@ def test_relevance_scorer_penalizes_recent_memory_similarity():
     assert penalized_score < fresh_score
 
 
+def test_relevance_scorer_uses_performance_as_capped_signal():
+    scorer = RelevanceScorer()
+    profile = CompanyProfile(organization_id="org_test", audience="builders")
+    evidence = [
+        SourceChunk(
+            source_id="src_test",
+            organization_id="org_test",
+            chunk_text="Product judgment gives builders safer public proof from approved knowledge.",
+            chunk_index=0,
+        )
+    ]
+
+    baseline_score, _ = scorer.score("product judgment", evidence, profile, [])
+    performance_score, _ = scorer.score(
+        "product judgment",
+        evidence,
+        profile,
+        [
+            PostMemory(
+                organization_id="org_test",
+                platform="linkedin",
+                content_type="company_post",
+                final_body="Previously approved product learning post.",
+                source_draft_id="draft_test",
+                topic_labels=["product", "learning"],
+                idea_fingerprint="product learning approved knowledge",
+                performance_snapshot={"performance_score": 1.0, "metrics": {"impressions": 1000}},
+            )
+        ],
+    )
+
+    assert performance_score > baseline_score
+    assert performance_score - baseline_score <= 0.041
+
+
 def test_freshness_scorer_flags_stale_sources():
     scorer = FreshnessScorer()
     fresh = Source(

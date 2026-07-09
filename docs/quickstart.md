@@ -72,6 +72,9 @@ Open `http://localhost:5173`.
 8. Generate LinkedIn company post drafts.
 9. Review evidence, claims, risks, quality, and duplicate memory.
 10. Edit, approve, reject with reason, export/copy, or schedule intent.
+11. Open Library to find generated, approved, exported, scheduled, rejected, or published artifacts.
+12. Open Calendar to inspect the two-week content/event board and publishing queue.
+13. Open Strategy to review pillar coverage, topic repetition, performance by platform/content type, and suggested next directions.
 
 ## 5. Verify The Project
 
@@ -88,3 +91,9 @@ Expected current result:
 
 - Backend: all tests pass.
 - Frontend: TypeScript and Vite production build pass.
+
+## 6. Local Data And Deletion
+
+The MVP uses an in-memory local store. Restarting the backend resets local runtime data.
+
+Organization owners can delete a workspace through the API. The delete response returns a receipt with removed record counts. See [Backup And Restore Guide](./backup_restore.md) for production backup, restore, and deletion expectations.

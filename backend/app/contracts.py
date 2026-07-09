@@ -6,14 +6,18 @@ from typing import Any, Protocol
 from app.schemas import (
     ClaimCheck,
     CompanyProfile,
+    ContentArtifact,
     ContentBrief,
     ContentOpportunity,
     Draft,
+    DraftPublishCreate,
     DraftGenerationSpec,
     PostMemory,
+    PublishResult,
     ReviewerPackage,
     Source,
     SourceChunk,
+    StrategyDashboard,
 )
 
 
@@ -153,6 +157,29 @@ class ReviewerPackageBuilder(Protocol):
 class LearningSignalRecorder(Protocol):
     def record(self, draft: Draft, decision: str, metadata: dict[str, Any]) -> None:
         """Persist approval, rejection, edit, export, and future performance signals."""
+
+
+class ContentArtifactCatalog(Protocol):
+    def list_artifacts(self, organization_id: str) -> list[ContentArtifact]:
+        """Return durable opportunities, briefs, drafts, and memory for library views."""
+
+
+class StrategyDashboardBuilder(Protocol):
+    def build(self, organization_id: str) -> StrategyDashboard:
+        """Return explainable strategy signals from sources, artifacts, memory, and metrics."""
+
+
+class PublishingAdapter(Protocol):
+    provider_name: str
+
+    def publish_company_post(
+        self,
+        draft: Draft,
+        payload: DraftPublishCreate,
+        page_urn: str,
+        page_name: str | None = None,
+    ) -> PublishResult:
+        """Publish an approved draft through a platform provider."""
 
 
 class ModelProvider(Protocol):

@@ -1,6 +1,7 @@
 import pytest
 
 from app.prompt_registry import prompt_versions
+from app.publishing import LinkedInPublishingAdapter, build_linkedin_publisher
 from app.providers import (
     DeterministicModelProvider,
     LocalHashEmbeddingProvider,
@@ -49,8 +50,19 @@ def test_embedding_provider_factory_is_configurable(monkeypatch):
     assert len(provider.embed(["source grounded content"])[0]) == 64
 
 
+def test_linkedin_publishing_provider_defaults_to_local(monkeypatch):
+    monkeypatch.delenv("QUAINY_LINKEDIN_PUBLISHING_PROVIDER", raising=False)
+
+    provider = build_linkedin_publisher()
+
+    assert isinstance(provider, LinkedInPublishingAdapter)
+    assert provider.provider_name == "linkedin-local"
+
+
 def test_unknown_provider_names_fail_fast():
     with pytest.raises(ValueError):
         build_model_provider("unknown-model")
     with pytest.raises(ValueError):
         build_embedding_provider("unknown-embedding")
+    with pytest.raises(ValueError):
+        build_linkedin_publisher("unknown-publisher")

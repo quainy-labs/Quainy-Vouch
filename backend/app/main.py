@@ -6,16 +6,31 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.schemas import (
+    ApprovalPolicy,
+    ApprovalPolicyUpdate,
+    AnalyticsDashboard,
+    CalendarEvent,
+    CalendarEventCreate,
     CompanyProfile,
     CompanyProfileUpdate,
+    ContentArtifact,
     ContentBrief,
+    DeletionReceipt,
     Draft,
     DraftCreateResult,
+    DraftPublishCreate,
     DraftScheduleCreate,
     DraftUpdate,
+    LinkedInIntegration,
+    LinkedInIntegrationUpdate,
     Organization,
     OrganizationCreate,
     OrganizationUpdate,
+    PerformanceMetricsCreate,
+    PostMemory,
+    PreferenceSuggestion,
+    PreferenceSuggestionDecision,
+    PublishResult,
     ReviewDecisionCreate,
     ReviewerPackage,
     RetrievalQuery,
@@ -24,9 +39,15 @@ from app.schemas import (
     SourceCreate,
     SourceDetail,
     SourceUpdate,
+    StrategyDashboard,
+    TrendSignal,
+    TrendSignalCreate,
+    User,
+    UserCreate,
+    UserUpdate,
 )
 from app.risk_checks import high_risk_unsupported_claims
-from app.store import ApprovalBlockedError, DataStore, NotFoundError, ReviewDecisionRequiredError
+from app.store import ApprovalBlockedError, DataStore, NotFoundError, PermissionDeniedError, ReviewDecisionRequiredError
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -53,6 +74,10 @@ def approval_blocked(error: ApprovalBlockedError) -> HTTPException:
 
 def bad_review_decision(error: ReviewDecisionRequiredError) -> HTTPException:
     return HTTPException(status_code=422, detail=str(error))
+
+
+def permission_denied(error: PermissionDeniedError) -> HTTPException:
+    return HTTPException(status_code=403, detail=str(error))
 
 
 @app.get("/health")
@@ -98,10 +123,62 @@ def update_organization(organization_id: str, payload: OrganizationUpdate) -> Or
         raise not_found(error) from error
 
 
-@app.delete("/organizations/{organization_id}", status_code=204)
-def delete_organization(organization_id: str) -> None:
+@app.get("/organizations/{organization_id}/users", response_model=list[User])
+def list_users(organization_id: str) -> list[User]:
     try:
-        store.delete_organization(organization_id)
+        return store.list_users(organization_id)
+    except NotFoundError as error:
+        raise not_found(error) from error
+
+
+@app.post("/organizations/{organization_id}/users", response_model=User)
+def create_user(organization_id: str, payload: UserCreate, actor_id: str = "local_user") -> User:
+    try:
+        return store.create_user(organization_id, payload, actor_id)
+    except PermissionDeniedError as error:
+        raise permission_denied(error) from error
+    except NotFoundError as error:
+        raise not_found(error) from error
+
+
+@app.patch("/organizations/{organization_id}/users/{user_id}", response_model=User)
+def update_user(organization_id: str, user_id: str, payload: UserUpdate, actor_id: str = "local_user") -> User:
+    try:
+        return store.update_user(organization_id, user_id, payload, actor_id)
+    except PermissionDeniedError as error:
+        raise permission_denied(error) from error
+    except NotFoundError as error:
+        raise not_found(error) from error
+
+
+@app.get("/organizations/{organization_id}/approval-policy", response_model=ApprovalPolicy)
+def get_approval_policy(organization_id: str) -> ApprovalPolicy:
+    try:
+        return store.get_approval_policy(organization_id)
+    except NotFoundError as error:
+        raise not_found(error) from error
+
+
+@app.patch("/organizations/{organization_id}/approval-policy", response_model=ApprovalPolicy)
+def update_approval_policy(
+    organization_id: str,
+    payload: ApprovalPolicyUpdate,
+    actor_id: str = "local_user",
+) -> ApprovalPolicy:
+    try:
+        return store.update_approval_policy(organization_id, payload, actor_id)
+    except PermissionDeniedError as error:
+        raise permission_denied(error) from error
+    except NotFoundError as error:
+        raise not_found(error) from error
+
+
+@app.delete("/organizations/{organization_id}", response_model=DeletionReceipt)
+def delete_organization(organization_id: str, actor_id: str = "local_user") -> DeletionReceipt:
+    try:
+        return store.delete_organization(organization_id, actor_id)
+    except PermissionDeniedError as error:
+        raise permission_denied(error) from error
     except NotFoundError as error:
         raise not_found(error) from error
 
@@ -123,12 +200,30 @@ def update_profile(organization_id: str, payload: CompanyProfileUpdate) -> Compa
         raise not_found(error) from error
 
 
-@app.post("/organizations/{organization_id}/sources", response_model=Source)
-def create_source(organization_id: str, payload: SourceCreate) -> Source:
+@app.get("/organizations/{organization_id}/linkedin-integration", response_model=LinkedInIntegration)
+def get_linkedin_integration(organization_id: str) -> LinkedInIntegration:
     try:
-        source = store.create_source(organization_id, payload)
-        store.ingest_source(source.id)
+        return store.get_linkedin_integration(organization_id)
+    except NotFoundError as error:
+        raise not_found(error) from error
+
+
+@app.patch("/organizations/{organization_id}/linkedin-integration", response_model=LinkedInIntegration)
+def update_linkedin_integration(organization_id: str, payload: LinkedInIntegrationUpdate) -> LinkedInIntegration:
+    try:
+        return store.update_linkedin_integration(organization_id, payload)
+    except NotFoundError as error:
+        raise not_found(error) from error
+
+
+@app.post("/organizations/{organization_id}/sources", response_model=Source)
+def create_source(organization_id: str, payload: SourceCreate, actor_id: str = "local_user") -> Source:
+    try:
+        source = store.create_source(organization_id, payload, actor_id)
+        store.ingest_source(source.id, actor_id)
         return source
+    except PermissionDeniedError as error:
+        raise permission_denied(error) from error
     except NotFoundError as error:
         raise not_found(error) from error
 
@@ -150,27 +245,33 @@ def get_source(source_id: str) -> SourceDetail:
 
 
 @app.patch("/sources/{source_id}", response_model=Source)
-def update_source(source_id: str, payload: SourceUpdate) -> Source:
+def update_source(source_id: str, payload: SourceUpdate, actor_id: str = "local_user") -> Source:
     try:
-        return store.update_source(source_id, payload)
+        return store.update_source(source_id, payload, actor_id)
+    except PermissionDeniedError as error:
+        raise permission_denied(error) from error
     except NotFoundError as error:
         raise not_found(error) from error
 
 
 @app.post("/sources/{source_id}/ingest")
-def ingest_source(source_id: str) -> dict[str, object]:
+def ingest_source(source_id: str, actor_id: str = "local_user") -> dict[str, object]:
     try:
-        chunks = store.ingest_source(source_id)
+        chunks = store.ingest_source(source_id, actor_id)
         return {"source_id": source_id, "chunk_count": len(chunks), "chunks": chunks}
+    except PermissionDeniedError as error:
+        raise permission_denied(error) from error
     except NotFoundError as error:
         raise not_found(error) from error
 
 
 @app.post("/sources/{source_id}/refresh")
-def refresh_source(source_id: str) -> dict[str, object]:
+def refresh_source(source_id: str, actor_id: str = "local_user") -> dict[str, object]:
     try:
-        chunks = store.ingest_source(source_id)
+        chunks = store.ingest_source(source_id, actor_id)
         return {"chunks": chunks, "message": "Source refreshed from the selected page snapshot."}
+    except PermissionDeniedError as error:
+        raise permission_denied(error) from error
     except NotFoundError as error:
         raise not_found(error) from error
 
@@ -200,6 +301,59 @@ def generate_opportunities(organization_id: str) -> dict[str, object]:
 @app.get("/organizations/{organization_id}/opportunities")
 def list_opportunities(organization_id: str) -> list[object]:
     return store.list_opportunities(organization_id)
+
+
+@app.get("/organizations/{organization_id}/calendar-events", response_model=list[CalendarEvent])
+def list_calendar_events(organization_id: str) -> list[CalendarEvent]:
+    try:
+        return store.list_calendar_events(organization_id)
+    except NotFoundError as error:
+        raise not_found(error) from error
+
+
+@app.post("/organizations/{organization_id}/calendar-events", response_model=CalendarEvent)
+def create_calendar_event(
+    organization_id: str,
+    payload: CalendarEventCreate,
+    actor_id: str = "local_user",
+) -> CalendarEvent:
+    try:
+        return store.create_calendar_event(organization_id, payload, actor_id)
+    except PermissionDeniedError as error:
+        raise permission_denied(error) from error
+    except NotFoundError as error:
+        raise not_found(error) from error
+
+
+@app.get("/organizations/{organization_id}/trend-signals", response_model=list[TrendSignal])
+def list_trend_signals(organization_id: str) -> list[TrendSignal]:
+    try:
+        return store.list_trend_signals(organization_id)
+    except NotFoundError as error:
+        raise not_found(error) from error
+
+
+@app.post("/organizations/{organization_id}/trend-signals", response_model=TrendSignal)
+def create_trend_signal(
+    organization_id: str,
+    payload: TrendSignalCreate,
+    actor_id: str = "local_user",
+) -> TrendSignal:
+    try:
+        return store.create_trend_signal(organization_id, payload, actor_id)
+    except PermissionDeniedError as error:
+        raise permission_denied(error) from error
+    except NotFoundError as error:
+        raise not_found(error) from error
+
+
+@app.post("/organizations/{organization_id}/trend-opportunities/generate")
+def generate_trend_opportunities(organization_id: str) -> dict[str, object]:
+    try:
+        opportunities = store.generate_trend_opportunities(organization_id)
+        return {"opportunities": opportunities}
+    except NotFoundError as error:
+        raise not_found(error) from error
 
 
 @app.post("/opportunities/{opportunity_id}/briefs", response_model=ContentBrief)
@@ -251,7 +405,14 @@ def reviewer_package(draft_id: str) -> ReviewerPackage:
         sources = [store.get_source(source_id) for source_id in brief.source_ids]
         source_chunks = [chunk for chunk in store.approved_chunks(draft.organization_id) if chunk.source_id in brief.source_ids]
         unsupported = high_risk_unsupported_claims(draft.claims)
-        suggested_action = "Review unsupported claims before approval." if unsupported else "Ready for human approval."
+        approval_progress = store.approval_progress(draft.id)
+        draft.approval_metadata = approval_progress
+        if unsupported:
+            suggested_action = "Review unsupported claims before approval."
+        elif approval_progress["remaining_reviewer_count"]:
+            suggested_action = f"Needs {approval_progress['remaining_reviewer_count']} more approval(s)."
+        else:
+            suggested_action = "Ready for human approval."
         return ReviewerPackage(
             draft=draft,
             brief=brief,
@@ -274,11 +435,13 @@ def regenerate_draft(draft_id: str) -> DraftCreateResult:
 
 
 @app.post("/drafts/{draft_id}/approve")
-def approve_draft(draft_id: str, payload: ReviewDecisionCreate) -> object:
+def approve_draft(draft_id: str, payload: ReviewDecisionCreate, actor_id: str = "local_user") -> object:
     try:
-        return store.approve_draft(draft_id, payload)
+        return store.approve_draft(draft_id, payload, actor_id)
     except ApprovalBlockedError as error:
         raise approval_blocked(error) from error
+    except PermissionDeniedError as error:
+        raise permission_denied(error) from error
     except NotFoundError as error:
         raise not_found(error) from error
 
@@ -297,6 +460,8 @@ def reject_draft(draft_id: str, payload: ReviewDecisionCreate) -> object:
 def export_draft(draft_id: str) -> object:
     try:
         return store.export_draft(draft_id)
+    except ApprovalBlockedError as error:
+        raise approval_blocked(error) from error
     except NotFoundError as error:
         raise not_found(error) from error
 
@@ -309,9 +474,103 @@ def schedule_draft(draft_id: str, payload: DraftScheduleCreate) -> object:
         raise not_found(error) from error
 
 
+@app.post("/drafts/{draft_id}/publish/linkedin", response_model=PublishResult)
+def publish_draft_to_linkedin(draft_id: str, payload: DraftPublishCreate) -> PublishResult:
+    try:
+        return store.publish_draft_to_linkedin(draft_id, payload)
+    except ApprovalBlockedError as error:
+        raise approval_blocked(error) from error
+    except NotFoundError as error:
+        raise not_found(error) from error
+
+
 @app.get("/organizations/{organization_id}/memory")
 def memory(organization_id: str) -> list[object]:
     return store.list_memory(organization_id)
+
+
+@app.get("/organizations/{organization_id}/preference-suggestions", response_model=list[PreferenceSuggestion])
+def list_preference_suggestions(organization_id: str) -> list[PreferenceSuggestion]:
+    try:
+        return store.list_preference_suggestions(organization_id)
+    except NotFoundError as error:
+        raise not_found(error) from error
+
+
+@app.post("/organizations/{organization_id}/preference-suggestions/generate", response_model=list[PreferenceSuggestion])
+def generate_preference_suggestions(organization_id: str) -> list[PreferenceSuggestion]:
+    try:
+        return store.generate_preference_suggestions(organization_id)
+    except NotFoundError as error:
+        raise not_found(error) from error
+
+
+@app.post("/preference-suggestions/{suggestion_id}/approve", response_model=PreferenceSuggestion)
+def approve_preference_suggestion(
+    suggestion_id: str,
+    payload: PreferenceSuggestionDecision,
+    actor_id: str = "local_user",
+) -> PreferenceSuggestion:
+    try:
+        return store.approve_preference_suggestion(suggestion_id, payload, actor_id)
+    except PermissionDeniedError as error:
+        raise permission_denied(error) from error
+    except NotFoundError as error:
+        raise not_found(error) from error
+
+
+@app.post("/preference-suggestions/{suggestion_id}/dismiss", response_model=PreferenceSuggestion)
+def dismiss_preference_suggestion(
+    suggestion_id: str,
+    payload: PreferenceSuggestionDecision,
+    actor_id: str = "local_user",
+) -> PreferenceSuggestion:
+    try:
+        return store.dismiss_preference_suggestion(suggestion_id, payload, actor_id)
+    except PermissionDeniedError as error:
+        raise permission_denied(error) from error
+    except NotFoundError as error:
+        raise not_found(error) from error
+
+
+@app.post("/memory/{memory_id}/performance", response_model=PostMemory)
+def record_memory_performance(memory_id: str, payload: PerformanceMetricsCreate) -> PostMemory:
+    try:
+        return store.record_performance_metrics(memory_id, payload)
+    except NotFoundError as error:
+        raise not_found(error) from error
+
+
+@app.post("/organizations/{organization_id}/analytics/import", response_model=list[PostMemory])
+def import_linkedin_analytics(organization_id: str) -> list[PostMemory]:
+    try:
+        return store.import_linkedin_analytics(organization_id)
+    except NotFoundError as error:
+        raise not_found(error) from error
+
+
+@app.get("/organizations/{organization_id}/analytics", response_model=AnalyticsDashboard)
+def analytics_dashboard(organization_id: str) -> AnalyticsDashboard:
+    try:
+        return store.analytics_dashboard(organization_id)
+    except NotFoundError as error:
+        raise not_found(error) from error
+
+
+@app.get("/organizations/{organization_id}/strategy", response_model=StrategyDashboard)
+def strategy_dashboard(organization_id: str) -> StrategyDashboard:
+    try:
+        return store.strategy_dashboard(organization_id)
+    except NotFoundError as error:
+        raise not_found(error) from error
+
+
+@app.get("/organizations/{organization_id}/content-artifacts", response_model=list[ContentArtifact])
+def content_artifacts(organization_id: str) -> list[ContentArtifact]:
+    try:
+        return store.list_content_artifacts(organization_id)
+    except NotFoundError as error:
+        raise not_found(error) from error
 
 
 @app.get("/organizations/{organization_id}/calendar", response_model=list[Draft])

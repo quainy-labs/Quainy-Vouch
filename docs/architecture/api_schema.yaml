@@ -21,7 +21,20 @@ paths:
     patch:
       summary: Update organization metadata.
     delete:
-      summary: Delete an organization and its dependent workspace data.
+      summary: Delete an organization and its dependent workspace data; owner role required.
+  /organizations/{organization_id}/users:
+    get:
+      summary: List workspace users and roles.
+    post:
+      summary: Create a workspace user; owner role required.
+  /organizations/{organization_id}/users/{user_id}:
+    patch:
+      summary: Update a workspace user role; owner role required.
+  /organizations/{organization_id}/approval-policy:
+    get:
+      summary: Get required reviewer count and approval gate settings.
+    patch:
+      summary: Update approval-chain policy; owner role required.
   /organizations/{organization_id}/profile:
     get:
       summary: Get company memory and voice profile.
@@ -52,6 +65,19 @@ paths:
   /organizations/{organization_id}/opportunities:
     get:
       summary: List content opportunities.
+  /organizations/{organization_id}/calendar-events:
+    get:
+      summary: List company and public calendar events used by trend relevance checks.
+    post:
+      summary: Create a company or public calendar event; owner/editor role required.
+  /organizations/{organization_id}/trend-signals:
+    get:
+      summary: List industry trend signals for an organization.
+    post:
+      summary: Create a manually researched industry trend signal; owner/editor role required.
+  /organizations/{organization_id}/trend-opportunities/generate:
+    post:
+      summary: Generate trend opportunities only when trend signals connect to approved company context; unrelated trends are returned as warnings.
   /opportunities/{opportunity_id}:
     get:
       summary: Get an opportunity with source references.
@@ -100,9 +126,44 @@ paths:
   /drafts/{draft_id}/schedule:
     post:
       summary: Assign a manual scheduled date/time intent for an approved or reviewable draft.
+  /drafts/{draft_id}/publish/linkedin:
+    post:
+      summary: Publish an approved LinkedIn company post through the LinkedIn publishing adapter.
+  /organizations/{organization_id}/linkedin-integration:
+    get:
+      summary: Get selected LinkedIn company page and OAuth readiness metadata.
+    patch:
+      summary: Save LinkedIn company page selection and local integration readiness metadata.
   /organizations/{organization_id}/memory:
     get:
       summary: List approved/exported/published post memory.
+  /organizations/{organization_id}/preference-suggestions:
+    get:
+      summary: List preference learning suggestions.
+  /organizations/{organization_id}/preference-suggestions/generate:
+    post:
+      summary: Generate preference suggestions from edits and rejection history.
+  /preference-suggestions/{suggestion_id}/approve:
+    post:
+      summary: Approve and apply a preference suggestion to profile memory.
+  /preference-suggestions/{suggestion_id}/dismiss:
+    post:
+      summary: Dismiss a preference suggestion without changing profile memory.
+  /memory/{memory_id}/performance:
+    post:
+      summary: Record manual performance metrics for a post memory item.
+  /organizations/{organization_id}/analytics/import:
+    post:
+      summary: Import basic post performance snapshots through the analytics provider.
+  /organizations/{organization_id}/analytics:
+    get:
+      summary: Get analytics dashboard totals and top posts.
+  /organizations/{organization_id}/strategy:
+    get:
+      summary: Get explainable strategy signals including pillar coverage, repeated topics, performance breakdowns, and suggested directions.
+  /organizations/{organization_id}/content-artifacts:
+    get:
+      summary: List durable content artifacts across opportunities, briefs, drafts, and approved/published memory for library views.
   /organizations/{organization_id}/calendar:
     get:
       summary: List approved, scheduled, and exported drafts in the manual queue.
@@ -113,6 +174,10 @@ components:
   schemas:
     Organization:
       description: Company or brand workspace.
+    User:
+      description: Workspace user with owner, editor, reviewer, or viewer role.
+    ApprovalPolicy:
+      description: Required reviewer count and export/publish approval gates.
     CompanyProfile:
       description: Stable brand memory, voice rules, approved claims, and forbidden claims.
     Source:
@@ -122,7 +187,11 @@ components:
     SourceChunk:
       description: Searchable source chunk with organization and source filters.
     ContentOpportunity:
-      description: Something worth communicating, with reason and source references.
+      description: Something worth communicating, with reason, source references, status, and gate metadata.
+    CalendarEvent:
+      description: Company or public event with relevance terms for trend timing.
+    TrendSignal:
+      description: Manually captured industry trend signal screened against approved company context.
     ContentBrief:
       description: Platform-independent message plan.
     Draft:
@@ -133,5 +202,27 @@ components:
       description: Human review decision and learning signal.
     PostMemory:
       description: Approved, exported, or published content used for duplicate checks and learning.
+    PreferenceSuggestion:
+      description: User-controlled profile or memory refinement suggestion generated from review signals.
+    LinkedInIntegration:
+      description: Selected LinkedIn company page and OAuth readiness metadata.
+    PublishResult:
+      description: Provider publishing result, including success or failure details.
+    AnalyticsDashboard:
+      description: Aggregated performance metrics and top post summaries.
+    ContentArtifact:
+      description: Durable library item representing an opportunity, brief, draft, or approved/published memory record.
+    StrategyDashboard:
+      description: Explainable strategy dashboard with pillar coverage, topic repetition, performance breakdowns, and next-direction recommendations.
+    PillarCoverage:
+      description: Source, artifact, and performance coverage for a company content pillar.
+    TopicRepetition:
+      description: Repeated topic label observed in approved, exported, or published content memory.
+    PerformanceBreakdown:
+      description: Platform or content-type performance summary derived from post memory metrics.
+    StrategyDirection:
+      description: Suggested next content direction with rationale, confidence, and source basis.
+    DeletionReceipt:
+      description: Confirmation of organization deletion with removed record counts.
     AuditLog:
       description: Auditable action record.

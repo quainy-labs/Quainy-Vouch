@@ -36,8 +36,25 @@ def test_organization_crud_and_validation():
     assert updated["industry"] == "AI tools"
 
     deleted = client.delete(f"/organizations/{org['id']}")
-    assert deleted.status_code == 204
+    receipt = deleted.json()
+    assert deleted.status_code == 200
+    assert receipt["organization_id"] == org["id"]
+    assert receipt["deleted_by"] == "local_user"
     assert client.get(f"/organizations/{org['id']}").status_code == 404
+
+
+def test_only_owner_can_delete_organization_data():
+    org = client.post("/organizations", json={"name": "Deletion Permission Org"}).json()
+    viewer = client.post(
+        f"/organizations/{org['id']}/users",
+        json={"name": "Viewer", "email": "delete-viewer@example.com", "role": "viewer"},
+    ).json()
+
+    denied = client.delete(f"/organizations/{org['id']}?actor_id={viewer['id']}")
+    allowed = client.delete(f"/organizations/{org['id']}")
+
+    assert denied.status_code == 403
+    assert allowed.status_code == 200
 
 
 def test_profile_update_preserves_omitted_fields_and_cleans_lists():

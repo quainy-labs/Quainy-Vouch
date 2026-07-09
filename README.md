@@ -1,15 +1,15 @@
 # Quainy Vouch
 
-Quainy Vouch is a local-first, source-grounded content intelligence product for turning approved company knowledge into human-reviewed public communication.
+Quainy Vouch is a production-first, source-grounded content intelligence product for turning approved company knowledge into human-reviewed public communication.
 
 It helps teams move from approved context to reviewable LinkedIn-style company drafts, blog outlines, newsletter emails, and Instagram captions/carousels without handing a tool broad internal access or allowing autonomous publishing.
 
 ## What Works Today
 
-The current codebase contains a deterministic local MVP:
+The current codebase contains a deterministic prototype foundation:
 
 - approved source ingestion
-- Quainy company profile and voice rules
+- sample company profile and voice rules
 - source-backed opportunity generation
 - platform-independent briefs
 - LinkedIn-style draft variants
@@ -18,10 +18,17 @@ The current codebase contains a deterministic local MVP:
 - Instagram caption and carousel variants from the same brief
 - claim, risk, quality, freshness, and duplicate metadata
 - review desk with edit, approve, reject with reason, regenerate, export/copy, and manual scheduling
-- approved/exported memory and similar-post warnings
-- seeded Quainy sample workspace
+- local LinkedIn publishing adapter with selected page metadata, provider result storage, and audited failure handling
+- approved/exported/published memory, similar-post warnings, analytics import, and manual metrics fallback
+- local workspace users with owner, editor, reviewer, and viewer roles
+- approval chains with required reviewer count and audited risk overrides
+- preference learning suggestions from edits and rejections, with user-approved profile updates
+- company/public calendar events, industry trend signals, and relevance-gated trend opportunities
+- durable content library and strategy dashboard with pillar coverage, topic repetition, platform/content-type performance, and suggested next directions
 
-This prototype is intentionally deterministic. It proves the trust workflow before live model-provider adapters are introduced.
+This prototype is intentionally deterministic. It proves the trust workflow before real authentication, persistent storage, live model-provider adapters, and production onboarding are introduced.
+
+The production product must start from each user's own organization. Seeded Quainy data, deterministic providers, and local fixtures are development aids only; they are not part of the intended production experience.
 
 ## Quickstart
 
@@ -56,13 +63,16 @@ See [Open-Source Quickstart](./docs/quickstart.md) for the full first-draft flow
 
 - [Open-Source Quickstart](./docs/quickstart.md)
 - [Security Notes](./docs/security.md)
+- [Backup And Restore Guide](./docs/backup_restore.md)
+- [Frontend Production Requirements](./docs/product/frontend_production_requirements.md)
+- [Production Readiness Checklist](./docs/product/production_readiness_checklist.md)
 - [System Overview](./docs/architecture/system_overview.md)
 - [Contributing](./CONTRIBUTING.md)
 - [Architecture API Schema](./docs/architecture/api_schema.yaml)
 - [Architecture Database Schema](./docs/architecture/database_schema.sql)
 - [Module Interfaces](./docs/architecture/module_interfaces.md)
 - [LinkedIn API Research](./docs/integrations/linkedin_api_research.md)
-- [Quainy Dogfood Evaluation](./docs/evaluation/quainy_dogfood_log.md)
+- [Prototype Evaluation Log](./docs/evaluation/quainy_dogfood_log.md)
 - [MVP Bug List](./docs/evaluation/mvp_bug_list.md)
 - [Evaluation Regression Reports](./docs/evaluation/regression_reports.md)
 
@@ -91,9 +101,9 @@ Run the deterministic MVP evaluation harness:
 uv run python scripts/run_eval.py
 ```
 
-## Seeded Sample Data
+## Development Fixtures
 
-The backend seeds a Quainy workspace at startup with:
+The current backend can seed a Quainy workspace during development with:
 
 - organization profile
 - voice rules
@@ -102,7 +112,7 @@ The backend seeds a Quainy workspace at startup with:
 - content pillars
 - approved sample context
 
-This lets a new developer generate source-backed draft variants without model keys or external integrations.
+This lets a developer generate source-backed draft variants without model keys or external integrations. Production onboarding must not rely on this seeded workspace.
 
 ## Current Architecture
 
@@ -111,6 +121,7 @@ flowchart LR
     A["Approved Sources"] --> B["Ingestion"]
     B --> C["Retrieval"]
     C --> D["Opportunities"]
+    K["Calendar / Trends"] --> D
     D --> E["Brief"]
     E --> F["Format Adapters"]
     F --> F1["LinkedIn Posts"]
@@ -124,24 +135,31 @@ flowchart LR
     G --> H["Review Desk"]
     H --> I["Approve / Reject / Export / Schedule"]
     I --> J["Memory"]
+    J --> L["Analytics / Strategy"]
+    D --> M["Content Library"]
+    E --> M
+    G --> M
+    J --> M
 ```
 
 ## Current Boundaries
 
-- No automated LinkedIn publishing.
+- No live LinkedIn OAuth or external API publishing by default.
+- Local LinkedIn publishing adapter is deterministic and credential-free.
 - No broad internal workspace crawling.
 - No live model calls.
+- Trends cannot become usable briefs unless they connect to approved company context.
 - No hidden data collection.
 - Seeded data comes from a small public sample context in `backend/app/sample_data.py`.
 
 ## Provider Configuration
 
-The local MVP defaults to deterministic providers:
+The current deterministic prototype defaults to:
 
 - `QUAINY_MODEL_PROVIDER=deterministic`
 - `QUAINY_EMBEDDING_PROVIDER=local_hash`
 
-An optional OpenAI model provider adapter is available behind the provider factory. It is not required for tests or local dogfood. To use it later, install the optional OpenAI SDK in your environment and configure:
+An optional OpenAI model provider adapter is available behind the provider factory. It is not required for deterministic tests. To use it later, install the optional OpenAI SDK in your environment and configure:
 
 ```bash
 QUAINY_MODEL_PROVIDER=openai

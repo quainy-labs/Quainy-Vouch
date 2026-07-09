@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from app.analytics import LocalAnalyticsImportProvider, build_performance_snapshot
 from app.contracts import FormatAdapter
 from app.briefs import build_brief
 from app.drafts import generate_drafts
@@ -18,24 +19,44 @@ from app.intelligence import (
     idea_fingerprint,
     normalize_text,
     split_chunks,
+    terms,
 )
 from app.opportunities import OpportunityGenerator
+from app.preference_learning import PreferenceLearningEngine
 from app.providers import build_embedding_provider, build_model_provider, cosine_similarity
+from app.publishing import build_linkedin_publisher
 from app.risk_checks import check_claims, high_risk_unsupported_claims, risk_check
+from app.trends import TrendOpportunityGenerator
 from app.schemas import (
     ApprovalDecision,
+    ApprovalPolicy,
+    ApprovalPolicyUpdate,
+    AnalyticsDashboard,
+    AnalyticsPostSummary,
     AuditLog,
+    CalendarEvent,
+    CalendarEventCreate,
     CompanyProfile,
     CompanyProfileUpdate,
     ContentBrief,
+    ContentArtifact,
     ContentOpportunity,
+    DeletionReceipt,
     Decision,
     Draft,
+    DraftPublishCreate,
     DraftStatus,
+    LinkedInIntegration,
+    LinkedInIntegrationUpdate,
     Organization,
     OrganizationCreate,
     OrganizationUpdate,
+    PerformanceMetricsCreate,
     PostMemory,
+    PreferenceSuggestion,
+    PreferenceSuggestionDecision,
+    PreferenceSuggestionStatus,
+    PublishResult,
     ReviewDecisionCreate,
     Source,
     SourceChunk,
@@ -44,6 +65,17 @@ from app.schemas import (
     SourceDocument,
     SourceStatus,
     SourceUpdate,
+    PerformanceBreakdown,
+    PillarCoverage,
+    StrategyDashboard,
+    StrategyDirection,
+    TopicRepetition,
+    TrendSignal,
+    TrendSignalCreate,
+    User,
+    UserCreate,
+    UserRole,
+    UserUpdate,
     now_utc,
 )
 from app.sample_data import QUAINY_SAMPLE_CONTEXT
@@ -62,9 +94,15 @@ class ReviewDecisionRequiredError(Exception):
     pass
 
 
+class PermissionDeniedError(Exception):
+    pass
+
+
 class DataStore:
     def __init__(self) -> None:
         self.organizations: dict[str, Organization] = {}
+        self.users: dict[tuple[str, str], User] = {}
+        self.approval_policies: dict[str, ApprovalPolicy] = {}
         self.profiles: dict[str, CompanyProfile] = {}
         self.sources: dict[str, Source] = {}
         self.source_raw_text: dict[str, str] = {}
@@ -73,16 +111,24 @@ class DataStore:
         self.latest_document_by_source: dict[str, str] = {}
         self.chunks: dict[str, SourceChunk] = {}
         self.opportunities: dict[str, ContentOpportunity] = {}
+        self.calendar_events: dict[str, CalendarEvent] = {}
+        self.trend_signals: dict[str, TrendSignal] = {}
         self.briefs: dict[str, ContentBrief] = {}
         self.drafts: dict[str, Draft] = {}
         self.decisions: dict[str, ApprovalDecision] = {}
         self.memory: dict[str, PostMemory] = {}
+        self.preference_suggestions: dict[str, PreferenceSuggestion] = {}
+        self.linkedin_integrations: dict[str, LinkedInIntegration] = {}
         self.audit_logs: list[AuditLog] = []
         self.format_adapters: dict[tuple[str, str], FormatAdapter] = {}
         self.source_connectors = default_source_connectors()
         self.model_provider = build_model_provider()
         self.embedding_provider = build_embedding_provider()
+        self.linkedin_publisher = build_linkedin_publisher()
+        self.analytics_importer = LocalAnalyticsImportProvider()
+        self.preference_learning = PreferenceLearningEngine()
         self.opportunity_generator = OpportunityGenerator()
+        self.trend_opportunity_generator = TrendOpportunityGenerator()
         self.register_format_adapter(LinkedInCompanyPostAdapter())
         self.register_format_adapter(BlogOutlineAdapter())
         self.register_format_adapter(NewsletterEmailAdapter())
@@ -167,8 +213,74 @@ class DataStore:
         org = Organization(**payload.model_dump())
         self.organizations[org.id] = org
         self.profiles[org.id] = CompanyProfile(organization_id=org.id)
+        self.approval_policies[org.id] = ApprovalPolicy(organization_id=org.id)
+        self.users[(org.id, "local_user")] = User(
+            id="local_user",
+            organization_id=org.id,
+            name="Local Owner",
+            email=None,
+            role=UserRole.owner,
+        )
         self.log(org.id, "organization.created", "organization", org.id)
         return org
+
+    def get_approval_policy(self, organization_id: str) -> ApprovalPolicy:
+        self.get_organization(organization_id)
+        if organization_id not in self.approval_policies:
+            self.approval_policies[organization_id] = ApprovalPolicy(organization_id=organization_id)
+        return self.approval_policies[organization_id]
+
+    def update_approval_policy(
+        self,
+        organization_id: str,
+        payload: ApprovalPolicyUpdate,
+        actor_id: str = "local_user",
+    ) -> ApprovalPolicy:
+        self.require_role(organization_id, actor_id, {UserRole.owner})
+        policy = ApprovalPolicy(organization_id=organization_id, **payload.model_dump(), updated_at=now_utc())
+        self.approval_policies[organization_id] = policy
+        self.log(
+            organization_id,
+            "approval_policy.updated",
+            "approval_policy",
+            organization_id,
+            policy.model_dump(mode="json"),
+            actor_id,
+        )
+        return policy
+
+    def list_users(self, organization_id: str) -> list[User]:
+        self.get_organization(organization_id)
+        return [user for (org_id, _user_id), user in self.users.items() if org_id == organization_id]
+
+    def create_user(self, organization_id: str, payload: UserCreate, actor_id: str = "local_user") -> User:
+        self.require_role(organization_id, actor_id, {UserRole.owner})
+        user = User(organization_id=organization_id, **payload.model_dump())
+        self.users[(organization_id, user.id)] = user
+        self.log(organization_id, "user.created", "user", user.id, {"role": user.role}, actor_id)
+        return user
+
+    def update_user(self, organization_id: str, user_id: str, payload: UserUpdate, actor_id: str = "local_user") -> User:
+        self.require_role(organization_id, actor_id, {UserRole.owner})
+        user = self.get_user(organization_id, user_id)
+        updates = payload.model_dump(exclude_unset=True)
+        updated = user.model_copy(update={**updates, "updated_at": now_utc()})
+        self.users[(organization_id, user_id)] = updated
+        self.log(organization_id, "user.updated", "user", user_id, {"fields": sorted(updates)}, actor_id)
+        return updated
+
+    def get_user(self, organization_id: str, user_id: str) -> User:
+        self.get_organization(organization_id)
+        key = (organization_id, user_id)
+        if key not in self.users:
+            raise NotFoundError("User not found")
+        return self.users[key]
+
+    def require_role(self, organization_id: str, actor_id: str, allowed_roles: set[UserRole]) -> User:
+        user = self.get_user(organization_id, actor_id)
+        if user.role not in allowed_roles:
+            raise PermissionDeniedError("User role is not allowed to perform this action.")
+        return user
 
     def list_organizations(self) -> list[Organization]:
         return list(self.organizations.values())
@@ -186,10 +298,39 @@ class DataStore:
         self.log(organization_id, "organization.updated", "organization", organization_id, {"fields": sorted(updates)})
         return updated
 
-    def delete_organization(self, organization_id: str) -> None:
-        self.get_organization(organization_id)
+    def delete_organization(self, organization_id: str, actor_id: str = "local_user") -> DeletionReceipt:
+        self.require_role(organization_id, actor_id, {UserRole.owner})
         source_ids = [source.id for source in self.sources.values() if source.organization_id == organization_id]
         document_ids = [document.id for document in self.source_documents.values() if document.source_id in source_ids]
+        chunk_ids = [chunk.id for chunk in self.chunks.values() if chunk.organization_id == organization_id]
+        opportunity_ids = [item.id for item in self.opportunities.values() if item.organization_id == organization_id]
+        brief_ids = [item.id for item in self.briefs.values() if item.organization_id == organization_id]
+        draft_ids = [item.id for item in self.drafts.values() if item.organization_id == organization_id]
+        event_ids = [item.id for item in self.calendar_events.values() if item.organization_id == organization_id]
+        trend_ids = [item.id for item in self.trend_signals.values() if item.organization_id == organization_id]
+        decision_ids = [item.id for item in self.decisions.values() if item.draft_id in draft_ids]
+        memory_ids = [item.id for item in self.memory.values() if item.organization_id == organization_id]
+        user_keys = [key for key in self.users if key[0] == organization_id]
+        counts = {
+            "sources": len(source_ids),
+            "source_documents": len(document_ids),
+            "source_chunks": len(chunk_ids),
+            "opportunities": len(opportunity_ids),
+            "briefs": len(brief_ids),
+            "drafts": len(draft_ids),
+            "calendar_events": len(event_ids),
+            "trend_signals": len(trend_ids),
+            "decisions": len(decision_ids),
+            "memory": len(memory_ids),
+            "users": len(user_keys),
+            "audit_logs": len([log for log in self.audit_logs if log.organization_id == organization_id]),
+        }
+        receipt = DeletionReceipt(
+            organization_id=organization_id,
+            deleted_by=actor_id,
+            counts=counts,
+            message="Organization data deleted from the local in-memory store.",
+        )
         for collection in [
             self.organizations,
             self.profiles,
@@ -197,6 +338,8 @@ class DataStore:
             self.source_documents,
             self.chunks,
             self.opportunities,
+            self.calendar_events,
+            self.trend_signals,
             self.briefs,
             self.drafts,
             self.decisions,
@@ -209,9 +352,16 @@ class DataStore:
             self.source_raw_text.pop(source_id, None)
             self.source_hashes.pop(source_id, None)
             self.latest_document_by_source.pop(source_id, None)
+        for key in user_keys:
+            del self.users[key]
+        self.approval_policies.pop(organization_id, None)
+        self.linkedin_integrations.pop(organization_id, None)
+        for suggestion_id in [item.id for item in self.preference_suggestions.values() if item.organization_id == organization_id]:
+            self.preference_suggestions.pop(suggestion_id, None)
         for document_id in document_ids:
             self.source_documents.pop(document_id, None)
         self.audit_logs = [log for log in self.audit_logs if log.organization_id != organization_id]
+        return receipt
 
     def update_profile(self, organization_id: str, payload: CompanyProfileUpdate) -> CompanyProfile:
         self.get_organization(organization_id)
@@ -222,8 +372,37 @@ class DataStore:
         self.log(organization_id, "profile.updated", "company_profile", organization_id, {"fields": sorted(updates)})
         return profile
 
-    def create_source(self, organization_id: str, payload: SourceCreate) -> Source:
+    def get_linkedin_integration(self, organization_id: str) -> LinkedInIntegration:
         self.get_organization(organization_id)
+        if organization_id not in self.linkedin_integrations:
+            self.linkedin_integrations[organization_id] = LinkedInIntegration(organization_id=organization_id)
+        return self.linkedin_integrations[organization_id]
+
+    def update_linkedin_integration(
+        self,
+        organization_id: str,
+        payload: LinkedInIntegrationUpdate,
+    ) -> LinkedInIntegration:
+        current = self.get_linkedin_integration(organization_id)
+        integration = current.model_copy(update={**payload.model_dump(), "updated_at": now_utc()})
+        self.linkedin_integrations[organization_id] = integration
+        self.log(
+            organization_id,
+            "linkedin.integration_updated",
+            "linkedin_integration",
+            organization_id,
+            {
+                "selected_page_urn": integration.selected_page_urn,
+                "selected_page_name": integration.selected_page_name,
+                "oauth_status": integration.oauth_status,
+                "publishing_enabled": integration.publishing_enabled,
+                "permissions": integration.permissions,
+            },
+        )
+        return integration
+
+    def create_source(self, organization_id: str, payload: SourceCreate, actor_id: str = "local_user") -> Source:
+        self.require_role(organization_id, actor_id, {UserRole.owner, UserRole.editor})
         source = Source(
             organization_id=organization_id,
             source_type=payload.source_type,
@@ -234,11 +413,12 @@ class DataStore:
         )
         self.sources[source.id] = source
         self.source_raw_text[source.id] = payload.raw_text
-        self.log(organization_id, "source.created", "source", source.id, {"title": source.title})
+        self.log(organization_id, "source.created", "source", source.id, {"title": source.title}, actor_id)
         return source
 
-    def update_source(self, source_id: str, payload: SourceUpdate) -> Source:
+    def update_source(self, source_id: str, payload: SourceUpdate, actor_id: str = "local_user") -> Source:
         source = self.get_source(source_id)
+        self.require_role(source.organization_id, actor_id, {UserRole.owner, UserRole.editor})
         updates = payload.model_dump(exclude_unset=True)
         raw_text = updates.pop("raw_text", None)
         previous_status = source.approval_status
@@ -253,13 +433,14 @@ class DataStore:
                 "source",
                 source.id,
                 {"from": previous_status.value, "to": updates["approval_status"].value},
+                actor_id,
             )
         else:
-            self.log(source.organization_id, "source.updated", "source", source.id, {"fields": sorted(updates)})
+            self.log(source.organization_id, "source.updated", "source", source.id, {"fields": sorted(updates)}, actor_id)
         return updated
 
-    def update_source_status(self, source_id: str, status: SourceStatus) -> Source:
-        return self.update_source(source_id, SourceUpdate(approval_status=status))
+    def update_source_status(self, source_id: str, status: SourceStatus, actor_id: str = "local_user") -> Source:
+        return self.update_source(source_id, SourceUpdate(approval_status=status), actor_id)
 
     def get_source(self, source_id: str) -> Source:
         if source_id not in self.sources:
@@ -269,7 +450,11 @@ class DataStore:
     def get_source_detail(self, source_id: str) -> SourceDetail:
         source = self.get_source(source_id)
         chunk_count = len([chunk for chunk in self.chunks.values() if chunk.source_id == source.id])
-        audit_logs = [log for log in self.audit_logs if log.entity_type == "source" and log.entity_id == source.id]
+        audit_logs = sorted(
+            [log for log in self.audit_logs if log.entity_type == "source" and log.entity_id == source.id],
+            key=lambda log: log.created_at,
+            reverse=True,
+        )
         return SourceDetail(
             source=source,
             raw_text=self.source_raw_text.get(source.id, ""),
@@ -281,8 +466,9 @@ class DataStore:
         self.get_organization(organization_id)
         return [source for source in self.sources.values() if source.organization_id == organization_id]
 
-    def ingest_source(self, source_id: str) -> list[SourceChunk]:
+    def ingest_source(self, source_id: str, actor_id: str = "local_user") -> list[SourceChunk]:
         source = self.get_source(source_id)
+        self.require_role(source.organization_id, actor_id, {UserRole.owner, UserRole.editor})
         raw_text = self.source_raw_text[source.id]
         connector = self.source_connectors.get(source.source_type, self.source_connectors["manual_note"])
         extracted = connector.extract({"title": source.title, "raw_text": raw_text, "uri": source.uri})
@@ -322,7 +508,7 @@ class DataStore:
         source.last_ingested_at = now_utc()
         source.updated_at = now_utc()
         self.sources[source.id] = source
-        self.log(source.organization_id, "source.ingested", "source", source.id, {"chunk_count": len(created)})
+        self.log(source.organization_id, "source.ingested", "source", source.id, {"chunk_count": len(created)}, actor_id)
         return created
 
     def approved_chunks(self, organization_id: str) -> list[SourceChunk]:
@@ -357,6 +543,60 @@ class DataStore:
         for opportunity in opportunities:
             self.opportunities[opportunity.id] = opportunity
         self.log(organization_id, "opportunities.generated", "organization", organization_id, {"count": len(opportunities)})
+        return opportunities
+
+    def create_calendar_event(
+        self,
+        organization_id: str,
+        payload: CalendarEventCreate,
+        actor_id: str = "local_user",
+    ) -> CalendarEvent:
+        self.require_role(organization_id, actor_id, {UserRole.owner, UserRole.editor})
+        event = CalendarEvent(organization_id=organization_id, **payload.model_dump())
+        self.calendar_events[event.id] = event
+        self.log(organization_id, "calendar_event.created", "calendar_event", event.id, {"event_type": event.event_type}, actor_id)
+        return event
+
+    def list_calendar_events(self, organization_id: str) -> list[CalendarEvent]:
+        self.get_organization(organization_id)
+        return sorted(
+            [event for event in self.calendar_events.values() if event.organization_id == organization_id],
+            key=lambda event: event.event_date,
+        )
+
+    def create_trend_signal(
+        self,
+        organization_id: str,
+        payload: TrendSignalCreate,
+        actor_id: str = "local_user",
+    ) -> TrendSignal:
+        self.require_role(organization_id, actor_id, {UserRole.owner, UserRole.editor})
+        trend = TrendSignal(organization_id=organization_id, **payload.model_dump())
+        self.trend_signals[trend.id] = trend
+        self.log(organization_id, "trend_signal.created", "trend_signal", trend.id, {"industry": trend.industry}, actor_id)
+        return trend
+
+    def list_trend_signals(self, organization_id: str) -> list[TrendSignal]:
+        self.get_organization(organization_id)
+        return sorted(
+            [trend for trend in self.trend_signals.values() if trend.organization_id == organization_id],
+            key=lambda trend: trend.created_at,
+            reverse=True,
+        )
+
+    def generate_trend_opportunities(self, organization_id: str) -> list[ContentOpportunity]:
+        self.get_organization(organization_id)
+        sources = [source for source in self.list_sources(organization_id) if source.approval_status == SourceStatus.approved]
+        opportunities = self.trend_opportunity_generator.generate(
+            organization_id,
+            self.list_trend_signals(organization_id),
+            sources,
+            self.approved_chunks(organization_id),
+            self.list_calendar_events(organization_id),
+        )
+        for opportunity in opportunities:
+            self.opportunities[opportunity.id] = opportunity
+        self.log(organization_id, "trend_opportunities.generated", "organization", organization_id, {"count": len(opportunities)})
         return opportunities
 
     def create_brief(self, opportunity_id: str) -> ContentBrief:
@@ -412,18 +652,61 @@ class DataStore:
         self.log(draft.organization_id, "draft.edited", "draft", draft.id)
         return draft
 
-    def approve_draft(self, draft_id: str, payload: ReviewDecisionCreate) -> ApprovalDecision:
+    def approve_draft(self, draft_id: str, payload: ReviewDecisionCreate, actor_id: str = "local_user") -> ApprovalDecision:
         draft = self.get_draft(draft_id)
+        self.require_role(draft.organization_id, actor_id, {UserRole.owner, UserRole.reviewer})
         if payload.edited_body:
             draft = self.update_draft_body(draft_id, payload.edited_body)
-        if high_risk_unsupported_claims(draft.claims):
-            raise ApprovalBlockedError("Unsupported factual claims must be resolved before approval.")
+        policy = self.get_approval_policy(draft.organization_id)
+        high_risk_claims = high_risk_unsupported_claims(draft.claims)
+        if high_risk_claims and not payload.override_reason:
+            raise ApprovalBlockedError("Unsupported factual claims must be resolved or explicitly overridden before approval.")
+        if high_risk_claims and not policy.allow_risk_override:
+            raise ApprovalBlockedError("Risk overrides are disabled for this workspace.")
+
+        decision = ApprovalDecision(
+            draft_id=draft.id,
+            decision=Decision.approve,
+            reviewer_id=actor_id,
+            **payload.model_dump(),
+        )
+        self.decisions[decision.id] = decision
+        if payload.override_reason:
+            self.log(
+                draft.organization_id,
+                "draft.risk_override",
+                "draft",
+                draft.id,
+                {
+                    "reviewer_id": actor_id,
+                    "override_reason": payload.override_reason,
+                    "unsupported_claim_count": len(high_risk_claims),
+                },
+                actor_id,
+            )
+
+        approval_progress = self.approval_progress(draft.id)
+        draft.approval_metadata = approval_progress
+        if approval_progress["approved_reviewer_count"] < policy.required_reviewer_count:
+            draft.status = DraftStatus.pending_approval
+            draft.updated_at = now_utc()
+            self.drafts[draft.id] = draft
+            self.log(
+                draft.organization_id,
+                "draft.approval_recorded",
+                "draft",
+                draft.id,
+                approval_progress,
+                actor_id,
+            )
+            return decision
+
         draft.status = DraftStatus.approved
         draft.updated_at = now_utc()
         self.drafts[draft.id] = draft
-        decision = ApprovalDecision(draft_id=draft.id, decision=Decision.approve, **payload.model_dump())
-        self.decisions[decision.id] = decision
-        self.memory[self._memory_id_for_draft(draft)] = PostMemory(
+        memory_id = self._memory_id_for_draft(draft)
+        self.memory[memory_id] = PostMemory(
+            id=memory_id,
             organization_id=draft.organization_id,
             platform=draft.platform,
             content_type=draft.content_type,
@@ -433,7 +716,7 @@ class DataStore:
             idea_fingerprint=idea_fingerprint(draft.body),
             approved_at=now_utc(),
         )
-        self.log(draft.organization_id, "draft.approved", "draft", draft.id)
+        self.log(draft.organization_id, "draft.approved", "draft", draft.id, approval_progress, actor_id)
         return decision
 
     def reject_draft(self, draft_id: str, payload: ReviewDecisionCreate) -> ApprovalDecision:
@@ -452,13 +735,18 @@ class DataStore:
 
     def export_draft(self, draft_id: str) -> ApprovalDecision:
         draft = self.get_draft(draft_id)
+        memory_id = self._memory_id_for_draft(draft)
+        memory = self.memory.get(memory_id)
+        policy = self.get_approval_policy(draft.organization_id)
+        if policy.require_approval_before_export and (memory is None or memory.approved_at is None):
+            raise ApprovalBlockedError("Draft must complete required approval before export.")
         draft.status = DraftStatus.exported
         draft.exported_at = now_utc()
         draft.updated_at = now_utc()
         self.drafts[draft.id] = draft
-        memory_id = self._memory_id_for_draft(draft)
         if memory_id not in self.memory:
             self.memory[memory_id] = PostMemory(
+                id=memory_id,
                 organization_id=draft.organization_id,
                 platform=draft.platform,
                 content_type=draft.content_type,
@@ -492,6 +780,63 @@ class DataStore:
         )
         return decision
 
+    def publish_draft_to_linkedin(self, draft_id: str, payload: DraftPublishCreate) -> PublishResult:
+        draft = self.get_draft(draft_id)
+        if draft.platform != "linkedin" or draft.content_type != "company_post":
+            raise ApprovalBlockedError("Only LinkedIn company post drafts can be published through the LinkedIn adapter.")
+        memory_id = self._memory_id_for_draft(draft)
+        memory = self.memory.get(memory_id)
+        policy = self.get_approval_policy(draft.organization_id)
+        if policy.require_approval_before_publish and (memory is None or memory.approved_at is None):
+            raise ApprovalBlockedError("Draft must be approved before publishing.")
+
+        integration = self.get_linkedin_integration(draft.organization_id)
+        page_urn = payload.page_urn or integration.selected_page_urn
+        page_name = payload.page_name or integration.selected_page_name
+        if not page_urn:
+            raise ApprovalBlockedError("Select a LinkedIn company page before publishing.")
+
+        result = self.linkedin_publisher.publish_company_post(draft, payload, page_urn, page_name)
+        draft.publish_result = result.model_dump(mode="json")
+        draft.updated_at = now_utc()
+
+        if result.status == "published":
+            draft.status = DraftStatus.published
+            draft.published_at = result.published_at or now_utc()
+            memory.published_at = draft.published_at
+            self.memory[memory_id] = memory
+            decision = ApprovalDecision(draft_id=draft.id, decision=Decision.publish, reason=payload.reason)
+            self.decisions[decision.id] = decision
+            self.log(
+                draft.organization_id,
+                "draft.published",
+                "draft",
+                draft.id,
+                {
+                    "provider": result.provider,
+                    "page_urn": result.page_urn,
+                    "page_name": result.page_name,
+                    "provider_post_id": result.provider_post_id,
+                    "published_url": result.published_url,
+                },
+            )
+        else:
+            self.log(
+                draft.organization_id,
+                "draft.publish_failed",
+                "draft",
+                draft.id,
+                {
+                    "provider": result.provider,
+                    "page_urn": result.page_urn,
+                    "page_name": result.page_name,
+                    "failure_reason": result.failure_reason,
+                },
+            )
+
+        self.drafts[draft.id] = draft
+        return result
+
     def get_opportunity(self, opportunity_id: str) -> ContentOpportunity:
         if opportunity_id not in self.opportunities:
             raise NotFoundError("Opportunity not found")
@@ -514,27 +859,450 @@ class DataStore:
             key=lambda decision: decision.created_at,
         )
 
+    def approval_progress(self, draft_id: str) -> dict[str, object]:
+        draft = self.get_draft(draft_id)
+        policy = self.get_approval_policy(draft.organization_id)
+        reviewers = sorted(
+            {
+                decision.reviewer_id or "unknown"
+                for decision in self.list_draft_decisions(draft_id)
+                if decision.decision == Decision.approve
+            }
+        )
+        remaining = max(policy.required_reviewer_count - len(reviewers), 0)
+        return {
+            "required_reviewer_count": policy.required_reviewer_count,
+            "approved_reviewer_count": len(reviewers),
+            "remaining_reviewer_count": remaining,
+            "approved_reviewer_ids": reviewers,
+            "complete": remaining == 0,
+        }
+
     def list_opportunities(self, organization_id: str) -> list[ContentOpportunity]:
         return [opportunity for opportunity in self.opportunities.values() if opportunity.organization_id == organization_id]
 
     def list_memory(self, organization_id: str) -> list[PostMemory]:
         return [post for post in self.memory.values() if post.organization_id == organization_id]
 
+    def list_content_artifacts(self, organization_id: str) -> list[ContentArtifact]:
+        self.get_organization(organization_id)
+        artifacts: list[ContentArtifact] = []
+        for opportunity in self.list_opportunities(organization_id):
+            artifacts.append(
+                ContentArtifact(
+                    id=opportunity.id,
+                    kind="opportunity",
+                    title=opportunity.title,
+                    status=opportunity.status,
+                    excerpt=opportunity.reason_today,
+                    source_count=len(opportunity.source_ids),
+                    risk_count=len(opportunity.metadata.get("warnings", [])) if isinstance(opportunity.metadata.get("warnings"), list) else 0,
+                    updated_at=opportunity.created_at,
+                )
+            )
+        for brief in self.briefs.values():
+            if brief.organization_id != organization_id:
+                continue
+            artifacts.append(
+                ContentArtifact(
+                    id=brief.id,
+                    kind="brief",
+                    title=brief.objective,
+                    status="source-backed",
+                    excerpt=brief.key_message,
+                    source_count=len(brief.source_ids),
+                    risk_count=len(brief.risks),
+                    updated_at=brief.created_at,
+                )
+            )
+        for draft in self.drafts.values():
+            if draft.organization_id != organization_id:
+                continue
+            artifacts.append(
+                ContentArtifact(
+                    id=draft.id,
+                    kind="draft",
+                    title=draft.hook or draft.body[:90],
+                    platform=draft.platform,
+                    content_type=draft.content_type,
+                    status=draft.status,
+                    excerpt=draft.body[:260],
+                    source_count=len(draft.source_ids),
+                    risk_count=len(draft.risk_report),
+                    updated_at=draft.updated_at,
+                    scheduled_for=draft.scheduled_for,
+                    published_at=draft.published_at,
+                )
+            )
+        for memory in self.list_memory(organization_id):
+            artifacts.append(
+                ContentArtifact(
+                    id=memory.id,
+                    kind="memory",
+                    title=memory.final_body[:90],
+                    platform=memory.platform,
+                    content_type=memory.content_type,
+                    status="published" if memory.published_at else "approved",
+                    excerpt=memory.final_body[:260],
+                    source_count=0,
+                    risk_count=0,
+                    updated_at=memory.published_at or memory.exported_at or memory.approved_at or now_utc(),
+                    published_at=memory.published_at,
+                )
+            )
+        return sorted(artifacts, key=lambda artifact: artifact.updated_at, reverse=True)
+
+    def generate_preference_suggestions(self, organization_id: str) -> list[PreferenceSuggestion]:
+        self.get_organization(organization_id)
+        draft_ids = {draft.id for draft in self.drafts.values() if draft.organization_id == organization_id}
+        decisions = [decision for decision in self.decisions.values() if decision.draft_id in draft_ids]
+        suggestions = self.preference_learning.build_suggestions(organization_id, decisions)
+        for suggestion in suggestions:
+            existing = self._find_matching_preference_suggestion(suggestion)
+            if existing:
+                existing.evidence = suggestion.evidence
+                existing.confidence = suggestion.confidence
+                self.preference_suggestions[existing.id] = existing
+            else:
+                self.preference_suggestions[suggestion.id] = suggestion
+        self.log(organization_id, "preferences.suggested", "organization", organization_id, {"count": len(suggestions)})
+        return self.list_preference_suggestions(organization_id)
+
+    def list_preference_suggestions(self, organization_id: str) -> list[PreferenceSuggestion]:
+        self.get_organization(organization_id)
+        return sorted(
+            [suggestion for suggestion in self.preference_suggestions.values() if suggestion.organization_id == organization_id],
+            key=lambda suggestion: suggestion.created_at,
+            reverse=True,
+        )
+
+    def approve_preference_suggestion(
+        self,
+        suggestion_id: str,
+        payload: PreferenceSuggestionDecision,
+        actor_id: str = "local_user",
+    ) -> PreferenceSuggestion:
+        suggestion = self.get_preference_suggestion(suggestion_id)
+        self.require_role(suggestion.organization_id, actor_id, {UserRole.owner, UserRole.editor})
+        if suggestion.status != PreferenceSuggestionStatus.pending:
+            return suggestion
+        self._apply_preference_update(suggestion)
+        suggestion.status = PreferenceSuggestionStatus.approved
+        suggestion.decided_at = now_utc()
+        self.preference_suggestions[suggestion.id] = suggestion
+        self.log(
+            suggestion.organization_id,
+            "preference_suggestion.approved",
+            "preference_suggestion",
+            suggestion.id,
+            {"reason": payload.reason, "proposed_update": suggestion.proposed_update},
+            actor_id,
+        )
+        return suggestion
+
+    def dismiss_preference_suggestion(
+        self,
+        suggestion_id: str,
+        payload: PreferenceSuggestionDecision,
+        actor_id: str = "local_user",
+    ) -> PreferenceSuggestion:
+        suggestion = self.get_preference_suggestion(suggestion_id)
+        self.require_role(suggestion.organization_id, actor_id, {UserRole.owner, UserRole.editor})
+        suggestion.status = PreferenceSuggestionStatus.dismissed
+        suggestion.decided_at = now_utc()
+        self.preference_suggestions[suggestion.id] = suggestion
+        self.log(
+            suggestion.organization_id,
+            "preference_suggestion.dismissed",
+            "preference_suggestion",
+            suggestion.id,
+            {"reason": payload.reason},
+            actor_id,
+        )
+        return suggestion
+
+    def get_preference_suggestion(self, suggestion_id: str) -> PreferenceSuggestion:
+        if suggestion_id not in self.preference_suggestions:
+            raise NotFoundError("Preference suggestion not found")
+        return self.preference_suggestions[suggestion_id]
+
+    def _apply_preference_update(self, suggestion: PreferenceSuggestion) -> None:
+        profile = self.profiles[suggestion.organization_id]
+        updates = suggestion.proposed_update
+        if "preferred_phrases_add" in updates:
+            additions = [item for item in updates["preferred_phrases_add"] if item not in profile.preferred_phrases]
+            profile.preferred_phrases = [*profile.preferred_phrases, *additions]
+        if "banned_phrases_add" in updates:
+            additions = [item for item in updates["banned_phrases_add"] if item not in profile.banned_phrases]
+            profile.banned_phrases = [*profile.banned_phrases, *additions]
+        profile.updated_at = now_utc()
+        self.profiles[suggestion.organization_id] = profile
+
+    def _find_matching_preference_suggestion(self, candidate: PreferenceSuggestion) -> PreferenceSuggestion | None:
+        for suggestion in self.preference_suggestions.values():
+            if (
+                suggestion.organization_id == candidate.organization_id
+                and suggestion.kind == candidate.kind
+                and suggestion.status == PreferenceSuggestionStatus.pending
+                and suggestion.proposed_update == candidate.proposed_update
+            ):
+                return suggestion
+        return None
+
+    def record_performance_metrics(self, memory_id: str, payload: PerformanceMetricsCreate) -> PostMemory:
+        if memory_id not in self.memory:
+            raise NotFoundError("Post memory not found")
+        memory = self.memory[memory_id]
+        memory.performance_snapshot = build_performance_snapshot(payload)
+        self.memory[memory_id] = memory
+        self.log(
+            memory.organization_id,
+            "memory.performance_recorded",
+            "post_memory",
+            memory.id,
+            {"source": memory.performance_snapshot.get("source"), "metrics": memory.performance_snapshot.get("metrics", {})},
+        )
+        return memory
+
+    def import_linkedin_analytics(self, organization_id: str) -> list[PostMemory]:
+        self.get_organization(organization_id)
+        imported: list[PostMemory] = []
+        for memory in self.list_memory(organization_id):
+            if memory.platform != "linkedin" or memory.published_at is None:
+                continue
+            memory.performance_snapshot = self.analytics_importer.import_snapshot(memory)
+            self.memory[memory.id] = memory
+            imported.append(memory)
+        self.log(
+            organization_id,
+            "analytics.imported",
+            "organization",
+            organization_id,
+            {"provider": self.analytics_importer.provider_name, "count": len(imported)},
+        )
+        return imported
+
+    def analytics_dashboard(self, organization_id: str) -> AnalyticsDashboard:
+        self.get_organization(organization_id)
+        posts = [memory for memory in self.list_memory(organization_id) if memory.performance_snapshot]
+        totals = {"impressions": 0, "reactions": 0, "comments": 0, "shares": 0, "clicks": 0}
+        summaries: list[AnalyticsPostSummary] = []
+        for memory in posts:
+            metrics = memory.performance_snapshot.get("metrics", {})
+            if not isinstance(metrics, dict):
+                metrics = {}
+            clean_metrics = {key: int(metrics.get(key, 0) or 0) for key in totals}
+            for key, value in clean_metrics.items():
+                totals[key] += value
+            score = float(memory.performance_snapshot.get("performance_score", 0.0) or 0.0)
+            summaries.append(
+                AnalyticsPostSummary(
+                    post_memory_id=memory.id,
+                    source_draft_id=memory.source_draft_id,
+                    platform=memory.platform,
+                    content_type=memory.content_type,
+                    excerpt=memory.final_body[:140],
+                    performance_score=score,
+                    metrics=clean_metrics,
+                )
+            )
+        summaries = sorted(summaries, key=lambda item: item.performance_score, reverse=True)
+        average = round(sum(item.performance_score for item in summaries) / len(summaries), 3) if summaries else 0.0
+        return AnalyticsDashboard(
+            organization_id=organization_id,
+            posts_analyzed=len(summaries),
+            total_impressions=totals["impressions"],
+            total_reactions=totals["reactions"],
+            total_comments=totals["comments"],
+            total_shares=totals["shares"],
+            total_clicks=totals["clicks"],
+            average_performance_score=average,
+            top_posts=summaries[:5],
+        )
+
+    def strategy_dashboard(self, organization_id: str) -> StrategyDashboard:
+        self.get_organization(organization_id)
+        profile = self.profiles[organization_id]
+        sources = [source for source in self.list_sources(organization_id) if source.approval_status == SourceStatus.approved]
+        source_chunks = self.approved_chunks(organization_id)
+        memory = self.list_memory(organization_id)
+        drafts = [draft for draft in self.drafts.values() if draft.organization_id == organization_id]
+        pillars = profile.content_pillars or ["approved company knowledge", "source-backed communication", "human review"]
+
+        pillar_coverage: list[PillarCoverage] = []
+        for pillar in pillars:
+            pillar_terms = terms(pillar)
+            source_count = sum(1 for chunk in source_chunks if pillar_terms & terms(chunk.chunk_text))
+            artifact_matches = [
+                item
+                for item in [*memory, *drafts]
+                if pillar_terms
+                and (
+                    pillar_terms & terms(getattr(item, "final_body", "") or getattr(item, "body", ""))
+                    or pillar_terms & set(getattr(item, "topic_labels", []))
+                )
+            ]
+            scored_memory = [
+                post
+                for post in memory
+                if post.performance_snapshot and (pillar_terms & terms(post.final_body) or pillar_terms & set(post.topic_labels))
+            ]
+            average_score = (
+                round(
+                    sum(float(post.performance_snapshot.get("performance_score", 0.0) or 0.0) for post in scored_memory) / len(scored_memory),
+                    3,
+                )
+                if scored_memory
+                else 0.0
+            )
+            if source_count == 0:
+                recommendation = "Add approved source evidence before generating more content for this pillar."
+            elif not artifact_matches:
+                recommendation = "Good source coverage, but this pillar needs new content."
+            elif average_score > 0:
+                recommendation = "Performance data exists; use it to refine the next recommendation."
+            else:
+                recommendation = "Content exists; add performance metrics to learn what works."
+            pillar_coverage.append(
+                PillarCoverage(
+                    pillar=pillar,
+                    source_count=source_count,
+                    artifact_count=len(artifact_matches),
+                    performance_score=average_score,
+                    recommendation=recommendation,
+                )
+            )
+
+        topic_counts: dict[str, dict[str, object]] = {}
+        for post in memory:
+            for topic in post.topic_labels:
+                if not topic:
+                    continue
+                current = topic_counts.setdefault(topic, {"count": 0, "last_seen": None})
+                current["count"] = int(current["count"]) + 1
+                seen_at = post.published_at or post.exported_at or post.approved_at
+                if seen_at and (current["last_seen"] is None or seen_at > current["last_seen"]):
+                    current["last_seen"] = seen_at
+        topic_repetition = sorted(
+            [
+                TopicRepetition(topic=topic, count=int(data["count"]), last_seen=data["last_seen"])
+                for topic, data in topic_counts.items()
+            ],
+            key=lambda item: item.count,
+            reverse=True,
+        )[:8]
+
+        def breakdown(key_fn) -> list[PerformanceBreakdown]:
+            groups: dict[str, list[PostMemory]] = {}
+            for post in memory:
+                if post.performance_snapshot:
+                    groups.setdefault(key_fn(post), []).append(post)
+            rows: list[PerformanceBreakdown] = []
+            for key, posts in sorted(groups.items()):
+                metrics_total = {"impressions": 0, "reactions": 0, "clicks": 0}
+                scores: list[float] = []
+                for post in posts:
+                    metrics = post.performance_snapshot.get("metrics", {})
+                    if not isinstance(metrics, dict):
+                        metrics = {}
+                    metrics_total["impressions"] += int(metrics.get("impressions", 0) or 0)
+                    metrics_total["reactions"] += int(metrics.get("reactions", 0) or 0)
+                    metrics_total["clicks"] += int(metrics.get("clicks", 0) or 0)
+                    scores.append(float(post.performance_snapshot.get("performance_score", 0.0) or 0.0))
+                rows.append(
+                    PerformanceBreakdown(
+                        key=key,
+                        label=key.replace("_", " ").title(),
+                        posts=len(posts),
+                        average_score=round(sum(scores) / len(scores), 3) if scores else 0.0,
+                        impressions=metrics_total["impressions"],
+                        reactions=metrics_total["reactions"],
+                        clicks=metrics_total["clicks"],
+                    )
+                )
+            return sorted(rows, key=lambda row: row.average_score, reverse=True)
+
+        suggested_directions: list[StrategyDirection] = []
+        uncovered = [pillar for pillar in pillar_coverage if pillar.source_count > 0 and pillar.artifact_count == 0]
+        weak_source = [pillar for pillar in pillar_coverage if pillar.source_count == 0]
+        repeated_topics = [topic for topic in topic_repetition if topic.count >= 2]
+        if uncovered:
+            pillar = uncovered[0]
+            suggested_directions.append(
+                StrategyDirection(
+                    title=f"Create content for {pillar.pillar}",
+                    rationale="Approved source coverage exists, but no durable content artifact has been created yet.",
+                    source_basis=[source.title for source in sources[:3]],
+                    confidence=0.78,
+                )
+            )
+        if weak_source:
+            pillar = weak_source[0]
+            suggested_directions.append(
+                StrategyDirection(
+                    title=f"Strengthen source coverage for {pillar.pillar}",
+                    rationale="This pillar is in the profile but lacks approved source evidence.",
+                    source_basis=[],
+                    confidence=0.68,
+                )
+            )
+        if repeated_topics:
+            topic = repeated_topics[0]
+            suggested_directions.append(
+                StrategyDirection(
+                    title=f"Vary repeated topic: {topic.topic}",
+                    rationale=f"This topic appears {topic.count} times in approved memory; use a different angle before repeating it again.",
+                    source_basis=[source.title for source in sources[:2]],
+                    confidence=0.64,
+                )
+            )
+        if not suggested_directions:
+            suggested_directions.append(
+                StrategyDirection(
+                    title="Generate a fresh source-backed recommendation",
+                    rationale="Current strategy signals are balanced; the next best move is to generate a new opportunity from approved context.",
+                    source_basis=[source.title for source in sources[:3]],
+                    confidence=0.58,
+                )
+            )
+
+        return StrategyDashboard(
+            organization_id=organization_id,
+            pillar_coverage=pillar_coverage,
+            topic_repetition=topic_repetition,
+            performance_by_platform=breakdown(lambda post: post.platform),
+            performance_by_content_type=breakdown(lambda post: post.content_type),
+            suggested_directions=suggested_directions,
+        )
+
     def list_calendar(self, organization_id: str) -> list[Draft]:
         self.get_organization(organization_id)
-        queue_statuses = {DraftStatus.approved, DraftStatus.scheduled, DraftStatus.exported}
+        queue_statuses = {DraftStatus.approved, DraftStatus.scheduled, DraftStatus.exported, DraftStatus.published}
         return sorted(
             [draft for draft in self.drafts.values() if draft.organization_id == organization_id and draft.status in queue_statuses],
             key=lambda draft: (draft.scheduled_for is None, draft.scheduled_for or draft.updated_at),
         )
 
     def list_audit_logs(self, organization_id: str) -> list[AuditLog]:
-        return [log for log in self.audit_logs if log.organization_id == organization_id]
+        return sorted(
+            [log for log in self.audit_logs if log.organization_id == organization_id],
+            key=lambda log: log.created_at,
+            reverse=True,
+        )
 
-    def log(self, organization_id: str, action: str, entity_type: str, entity_id: str, metadata: dict | None = None) -> None:
+    def log(
+        self,
+        organization_id: str,
+        action: str,
+        entity_type: str,
+        entity_id: str,
+        metadata: dict | None = None,
+        actor_id: str = "local_user",
+    ) -> None:
         self.audit_logs.append(
             AuditLog(
                 organization_id=organization_id,
+                actor_id=actor_id,
                 action=action,
                 entity_type=entity_type,
                 entity_id=entity_id,

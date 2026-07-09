@@ -23,13 +23,101 @@ class SourceStatus(str, Enum):
     archived = "archived"
 
 
+class CalendarEventType(str, Enum):
+    company = "company"
+    public = "public"
+
+
+class CalendarEventCreate(BaseModel):
+    title: str = Field(min_length=1)
+    event_date: datetime
+    event_type: CalendarEventType = CalendarEventType.company
+    description: str | None = None
+    relevance_terms: list[str] = Field(default_factory=list)
+
+    @field_validator("title")
+    @classmethod
+    def clean_event_title(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("Value cannot be blank")
+        return cleaned
+
+    @field_validator("description")
+    @classmethod
+    def clean_optional_event_description(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        cleaned = value.strip()
+        return cleaned or None
+
+    @field_validator("relevance_terms")
+    @classmethod
+    def clean_event_terms(cls, values: list[str]) -> list[str]:
+        cleaned: list[str] = []
+        for value in values:
+            item = value.strip().lower()
+            if item and item not in cleaned:
+                cleaned.append(item)
+        return cleaned
+
+
+class CalendarEvent(CalendarEventCreate):
+    id: str = Field(default_factory=lambda: new_id("event"))
+    organization_id: str
+    created_at: datetime = Field(default_factory=now_utc)
+
+
+class TrendSignalCreate(BaseModel):
+    title: str = Field(min_length=1)
+    summary: str = Field(min_length=10)
+    industry: str | None = None
+    relevance_terms: list[str] = Field(default_factory=list)
+    source_uri: str | None = None
+
+    @field_validator("title", "summary", "industry", "source_uri")
+    @classmethod
+    def clean_optional_trend_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("Value cannot be blank")
+        return cleaned
+
+    @field_validator("relevance_terms")
+    @classmethod
+    def clean_trend_terms(cls, values: list[str]) -> list[str]:
+        cleaned: list[str] = []
+        for value in values:
+            item = value.strip().lower()
+            if item and item not in cleaned:
+                cleaned.append(item)
+        return cleaned
+
+
+class TrendSignal(TrendSignalCreate):
+    id: str = Field(default_factory=lambda: new_id("trend"))
+    organization_id: str
+    created_at: datetime = Field(default_factory=now_utc)
+
+
+class UserRole(str, Enum):
+    owner = "owner"
+    editor = "editor"
+    reviewer = "reviewer"
+    viewer = "viewer"
+
+
 class DraftStatus(str, Enum):
     draft = "draft"
     needs_review = "needs_review"
+    pending_approval = "pending_approval"
     approved = "approved"
     rejected = "rejected"
     scheduled = "scheduled"
     exported = "exported"
+    published = "published"
 
 
 class Decision(str, Enum):
@@ -37,7 +125,20 @@ class Decision(str, Enum):
     reject = "reject"
     schedule = "schedule"
     export = "export"
+    publish = "publish"
     regenerate = "regenerate"
+
+
+class PreferenceSuggestionStatus(str, Enum):
+    pending = "pending"
+    approved = "approved"
+    dismissed = "dismissed"
+
+
+class PreferenceSuggestionKind(str, Enum):
+    voice_phrase = "voice_phrase"
+    rejected_pattern = "rejected_pattern"
+    memory_update = "memory_update"
 
 
 class OrganizationCreate(BaseModel):
@@ -78,6 +179,49 @@ class OrganizationUpdate(BaseModel):
 
 class Organization(OrganizationCreate):
     id: str = Field(default_factory=lambda: new_id("org"))
+    created_at: datetime = Field(default_factory=now_utc)
+    updated_at: datetime = Field(default_factory=now_utc)
+
+
+class UserCreate(BaseModel):
+    name: str = Field(min_length=1)
+    email: str | None = None
+    role: UserRole = UserRole.viewer
+
+    @field_validator("name")
+    @classmethod
+    def clean_user_name(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("Value cannot be blank")
+        return cleaned
+
+    @field_validator("email")
+    @classmethod
+    def clean_optional_user_email(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        cleaned = value.strip()
+        return cleaned or None
+
+
+class UserUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1)
+    email: str | None = None
+    role: UserRole | None = None
+
+    @field_validator("name", "email")
+    @classmethod
+    def clean_optional_user_update_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        cleaned = value.strip()
+        return cleaned or None
+
+
+class User(UserCreate):
+    id: str = Field(default_factory=lambda: new_id("user"))
+    organization_id: str
     created_at: datetime = Field(default_factory=now_utc)
     updated_at: datetime = Field(default_factory=now_utc)
 
@@ -264,6 +408,7 @@ class ContentOpportunity(BaseModel):
     relevance_score: float
     confidence_score: float
     status: str = "suggested"
+    metadata: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime = Field(default_factory=now_utc)
 
 
@@ -323,8 +468,11 @@ class Draft(BaseModel):
     duplicate_report: dict[str, Any] = Field(default_factory=dict)
     claims: list[ClaimCheck] = Field(default_factory=list)
     generation_metadata: dict[str, Any] = Field(default_factory=dict)
+    approval_metadata: dict[str, Any] = Field(default_factory=dict)
     scheduled_for: datetime | None = None
     exported_at: datetime | None = None
+    published_at: datetime | None = None
+    publish_result: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime = Field(default_factory=now_utc)
     updated_at: datetime = Field(default_factory=now_utc)
 
@@ -342,10 +490,220 @@ class DraftScheduleCreate(BaseModel):
     reason: str | None = None
 
 
+class ApprovalPolicyUpdate(BaseModel):
+    required_reviewer_count: int = Field(default=1, ge=1, le=10)
+    require_approval_before_export: bool = True
+    require_approval_before_publish: bool = True
+    allow_risk_override: bool = True
+
+
+class ApprovalPolicy(ApprovalPolicyUpdate):
+    organization_id: str
+    updated_at: datetime = Field(default_factory=now_utc)
+
+
+class LinkedInIntegrationUpdate(BaseModel):
+    selected_page_urn: str | None = None
+    selected_page_name: str | None = None
+    oauth_status: str = "not_connected"
+    permissions: list[str] = Field(default_factory=list)
+    publishing_enabled: bool = False
+
+    @field_validator("selected_page_urn", "selected_page_name", "oauth_status")
+    @classmethod
+    def clean_optional_integration_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        cleaned = value.strip()
+        return cleaned or None
+
+    @field_validator("permissions")
+    @classmethod
+    def clean_permissions(cls, values: list[str]) -> list[str]:
+        cleaned: list[str] = []
+        for value in values:
+            item = value.strip()
+            if item and item not in cleaned:
+                cleaned.append(item)
+        return cleaned
+
+
+class LinkedInIntegration(LinkedInIntegrationUpdate):
+    organization_id: str
+    updated_at: datetime = Field(default_factory=now_utc)
+
+
+class DraftPublishCreate(BaseModel):
+    page_urn: str | None = None
+    page_name: str | None = None
+    simulate_failure: bool = False
+    reason: str | None = None
+
+    @field_validator("page_urn", "page_name", "reason")
+    @classmethod
+    def clean_optional_publish_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        cleaned = value.strip()
+        return cleaned or None
+
+
+class PublishResult(BaseModel):
+    provider: str
+    status: str
+    draft_id: str
+    page_urn: str
+    page_name: str | None = None
+    provider_post_id: str | None = None
+    published_url: str | None = None
+    failure_reason: str | None = None
+    requested_at: datetime = Field(default_factory=now_utc)
+    published_at: datetime | None = None
+
+
+class PerformanceMetricsCreate(BaseModel):
+    impressions: int = Field(default=0, ge=0)
+    reactions: int = Field(default=0, ge=0)
+    comments: int = Field(default=0, ge=0)
+    shares: int = Field(default=0, ge=0)
+    clicks: int = Field(default=0, ge=0)
+    source: str = "manual"
+    notes: str | None = None
+    captured_at: datetime = Field(default_factory=now_utc)
+
+    @field_validator("source", "notes")
+    @classmethod
+    def clean_optional_metric_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        cleaned = value.strip()
+        return cleaned or None
+
+
+class AnalyticsPostSummary(BaseModel):
+    post_memory_id: str
+    source_draft_id: str
+    platform: str
+    content_type: str
+    excerpt: str
+    performance_score: float
+    metrics: dict[str, int] = Field(default_factory=dict)
+
+
+class AnalyticsDashboard(BaseModel):
+    organization_id: str
+    posts_analyzed: int
+    total_impressions: int
+    total_reactions: int
+    total_comments: int
+    total_shares: int
+    total_clicks: int
+    average_performance_score: float
+    top_posts: list[AnalyticsPostSummary] = Field(default_factory=list)
+
+
+class ContentArtifact(BaseModel):
+    id: str
+    kind: str
+    title: str
+    platform: str | None = None
+    content_type: str | None = None
+    status: str
+    excerpt: str
+    source_count: int = 0
+    risk_count: int = 0
+    updated_at: datetime
+    scheduled_for: datetime | None = None
+    published_at: datetime | None = None
+
+
+class PillarCoverage(BaseModel):
+    pillar: str
+    source_count: int = 0
+    artifact_count: int = 0
+    performance_score: float = 0.0
+    recommendation: str
+
+
+class TopicRepetition(BaseModel):
+    topic: str
+    count: int
+    last_seen: datetime | None = None
+
+
+class PerformanceBreakdown(BaseModel):
+    key: str
+    label: str
+    posts: int
+    average_score: float = 0.0
+    impressions: int = 0
+    reactions: int = 0
+    clicks: int = 0
+
+
+class StrategyDirection(BaseModel):
+    title: str
+    rationale: str
+    source_basis: list[str] = Field(default_factory=list)
+    confidence: float = 0.5
+
+
+class StrategyDashboard(BaseModel):
+    organization_id: str
+    pillar_coverage: list[PillarCoverage] = Field(default_factory=list)
+    topic_repetition: list[TopicRepetition] = Field(default_factory=list)
+    performance_by_platform: list[PerformanceBreakdown] = Field(default_factory=list)
+    performance_by_content_type: list[PerformanceBreakdown] = Field(default_factory=list)
+    suggested_directions: list[StrategyDirection] = Field(default_factory=list)
+
+
+class DeletionReceipt(BaseModel):
+    organization_id: str
+    deleted_by: str
+    deleted_at: datetime = Field(default_factory=now_utc)
+    counts: dict[str, int] = Field(default_factory=dict)
+    message: str
+
+
+class PreferenceSuggestion(BaseModel):
+    id: str = Field(default_factory=lambda: new_id("pref"))
+    organization_id: str
+    kind: PreferenceSuggestionKind
+    title: str
+    rationale: str
+    proposed_update: dict[str, Any] = Field(default_factory=dict)
+    evidence: list[str] = Field(default_factory=list)
+    confidence: float = 0.5
+    status: PreferenceSuggestionStatus = PreferenceSuggestionStatus.pending
+    created_at: datetime = Field(default_factory=now_utc)
+    decided_at: datetime | None = None
+
+
+class PreferenceSuggestionDecision(BaseModel):
+    reason: str | None = None
+
+    @field_validator("reason")
+    @classmethod
+    def clean_preference_reason(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        cleaned = value.strip()
+        return cleaned or None
+
+
 class ReviewDecisionCreate(BaseModel):
     edited_body: str | None = None
     reason: str | None = None
+    override_reason: str | None = None
     labels: list[str] = Field(default_factory=list)
+
+    @field_validator("edited_body", "reason", "override_reason")
+    @classmethod
+    def clean_optional_decision_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        cleaned = value.strip()
+        return cleaned or None
 
 
 class ApprovalDecision(BaseModel):
@@ -354,6 +712,8 @@ class ApprovalDecision(BaseModel):
     decision: Decision
     edited_body: str | None = None
     reason: str | None = None
+    override_reason: str | None = None
+    reviewer_id: str | None = None
     labels: list[str] = Field(default_factory=list)
     created_at: datetime = Field(default_factory=now_utc)
 

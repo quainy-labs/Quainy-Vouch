@@ -14,6 +14,28 @@ CREATE TABLE organizations (
     updated_at TIMESTAMPTZ NOT NULL
 );
 
+CREATE TABLE users (
+    id TEXT NOT NULL,
+    organization_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    email TEXT,
+    role TEXT NOT NULL CHECK (role IN ('owner', 'editor', 'reviewer', 'viewer')),
+    created_at TIMESTAMPTZ NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY (organization_id, id)
+);
+
+CREATE INDEX users_org_role_idx ON users (organization_id, role);
+
+CREATE TABLE approval_policies (
+    organization_id TEXT PRIMARY KEY REFERENCES organizations(id) ON DELETE CASCADE,
+    required_reviewer_count INTEGER NOT NULL DEFAULT 1,
+    require_approval_before_export BOOLEAN NOT NULL DEFAULT TRUE,
+    require_approval_before_publish BOOLEAN NOT NULL DEFAULT TRUE,
+    allow_risk_override BOOLEAN NOT NULL DEFAULT TRUE,
+    updated_at TIMESTAMPTZ NOT NULL
+);
+
 CREATE TABLE company_profiles (
     organization_id TEXT PRIMARY KEY REFERENCES organizations(id) ON DELETE CASCADE,
     one_liner TEXT,
@@ -88,10 +110,41 @@ CREATE TABLE content_opportunities (
     relevance_score NUMERIC NOT NULL,
     confidence_score NUMERIC NOT NULL,
     status TEXT NOT NULL DEFAULT 'suggested',
+    metadata JSONB NOT NULL DEFAULT '{}',
     created_at TIMESTAMPTZ NOT NULL
 );
 
 CREATE INDEX content_opportunities_org_status_idx ON content_opportunities (organization_id, status);
+
+CREATE TABLE calendar_events (
+    id TEXT PRIMARY KEY,
+    organization_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    title TEXT NOT NULL,
+    event_type TEXT NOT NULL CHECK (event_type IN ('company', 'public')),
+    starts_at TIMESTAMPTZ NOT NULL,
+    ends_at TIMESTAMPTZ,
+    description TEXT,
+    relevance_terms JSONB NOT NULL DEFAULT '[]',
+    created_by TEXT,
+    created_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE INDEX calendar_events_org_start_idx ON calendar_events (organization_id, starts_at);
+
+CREATE TABLE trend_signals (
+    id TEXT PRIMARY KEY,
+    organization_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    title TEXT NOT NULL,
+    summary TEXT NOT NULL,
+    source_name TEXT NOT NULL,
+    source_url TEXT,
+    observed_at TIMESTAMPTZ NOT NULL,
+    relevance_terms JSONB NOT NULL DEFAULT '[]',
+    created_by TEXT,
+    created_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE INDEX trend_signals_org_observed_idx ON trend_signals (organization_id, observed_at DESC);
 
 CREATE TABLE content_briefs (
     id TEXT PRIMARY KEY,
@@ -126,8 +179,11 @@ CREATE TABLE drafts (
     quality_report JSONB NOT NULL DEFAULT '[]',
     duplicate_report JSONB NOT NULL DEFAULT '{}',
     generation_metadata JSONB NOT NULL DEFAULT '{}',
+    approval_metadata JSONB NOT NULL DEFAULT '{}',
     scheduled_for TIMESTAMPTZ,
     exported_at TIMESTAMPTZ,
+    published_at TIMESTAMPTZ,
+    publish_result JSONB NOT NULL DEFAULT '{}',
     created_at TIMESTAMPTZ NOT NULL,
     updated_at TIMESTAMPTZ NOT NULL
 );
@@ -149,10 +205,11 @@ CREATE TABLE claims (
 CREATE TABLE approval_decisions (
     id TEXT PRIMARY KEY,
     draft_id TEXT NOT NULL REFERENCES drafts(id) ON DELETE CASCADE,
-    decision TEXT NOT NULL CHECK (decision IN ('approve', 'reject', 'request_changes', 'regenerate', 'schedule', 'export')),
+    decision TEXT NOT NULL CHECK (decision IN ('approve', 'reject', 'request_changes', 'regenerate', 'schedule', 'export', 'publish')),
     reviewer_id TEXT,
     edited_body TEXT,
     reason TEXT,
+    override_reason TEXT,
     labels JSONB NOT NULL DEFAULT '[]',
     created_at TIMESTAMPTZ NOT NULL
 );
@@ -176,6 +233,48 @@ CREATE TABLE post_memory (
 );
 
 CREATE INDEX post_memory_org_platform_idx ON post_memory (organization_id, platform, content_type);
+
+CREATE TABLE preference_suggestions (
+    id TEXT PRIMARY KEY,
+    organization_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL CHECK (kind IN ('voice_phrase', 'rejected_pattern', 'memory_update')),
+    title TEXT NOT NULL,
+    rationale TEXT NOT NULL,
+    proposed_update JSONB NOT NULL DEFAULT '{}',
+    evidence JSONB NOT NULL DEFAULT '[]',
+    confidence NUMERIC NOT NULL DEFAULT 0.5,
+    status TEXT NOT NULL CHECK (status IN ('pending', 'approved', 'dismissed')),
+    created_at TIMESTAMPTZ NOT NULL,
+    decided_at TIMESTAMPTZ
+);
+
+CREATE INDEX preference_suggestions_org_status_idx ON preference_suggestions (organization_id, status);
+
+CREATE TABLE linkedin_integrations (
+    organization_id TEXT PRIMARY KEY REFERENCES organizations(id) ON DELETE CASCADE,
+    selected_page_urn TEXT,
+    selected_page_name TEXT,
+    oauth_status TEXT NOT NULL DEFAULT 'not_connected',
+    permissions JSONB NOT NULL DEFAULT '[]',
+    publishing_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+    updated_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE TABLE publish_results (
+    id TEXT PRIMARY KEY,
+    draft_id TEXT NOT NULL REFERENCES drafts(id) ON DELETE CASCADE,
+    provider TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('published', 'failed')),
+    page_urn TEXT NOT NULL,
+    page_name TEXT,
+    provider_post_id TEXT,
+    published_url TEXT,
+    failure_reason TEXT,
+    requested_at TIMESTAMPTZ NOT NULL,
+    published_at TIMESTAMPTZ
+);
+
+CREATE INDEX publish_results_draft_idx ON publish_results (draft_id, requested_at DESC);
 
 CREATE TABLE audit_logs (
     id TEXT PRIMARY KEY,
