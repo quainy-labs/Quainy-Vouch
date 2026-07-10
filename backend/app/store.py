@@ -1048,6 +1048,11 @@ class DataStore:
     def list_memory(self, organization_id: str) -> list[PostMemory]:
         return [post for post in self.memory.values() if post.organization_id == organization_id]
 
+    def get_memory(self, memory_id: str) -> PostMemory:
+        if memory_id not in self.memory:
+            raise NotFoundError("Post memory not found")
+        return self.memory[memory_id]
+
     def list_content_artifacts(self, organization_id: str) -> list[ContentArtifact]:
         self.get_organization(organization_id)
         artifacts: list[ContentArtifact] = []

@@ -1,13 +1,37 @@
 services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-quainy_vouch}
+      POSTGRES_USER: ${POSTGRES_USER:-quainy}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-quainy_dev_password}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-quainy} -d ${POSTGRES_DB:-quainy_vouch}"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
   backend:
     build:
       context: .
       dockerfile: backend/Dockerfile
     ports:
       - "8000:8000"
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql://quainy:quainy_dev_password@postgres:5432/quainy_vouch}
+      QUAINY_DATA_BACKEND: ${QUAINY_DATA_BACKEND:-postgres}
+      QUAINY_ENABLE_DEV_SEED: ${QUAINY_ENABLE_DEV_SEED:-false}
+      QUAINY_FIXTURE_MODE: ${QUAINY_FIXTURE_MODE:-none}
     volumes:
       - .:/app
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --app-dir backend
+    depends_on:
+      postgres:
+        condition: service_healthy
 
   frontend:
     build:
@@ -23,3 +47,6 @@ services:
     command: npm run dev
     depends_on:
       - backend
+
+volumes:
+  postgres_data:

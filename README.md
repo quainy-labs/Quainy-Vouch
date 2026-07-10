@@ -26,8 +26,9 @@ The current codebase contains a deterministic prototype foundation:
 - preference learning suggestions from edits and rejections, with user-approved profile updates
 - company/public calendar events, industry trend signals, and relevance-gated trend opportunities
 - durable content library and strategy dashboard with pillar coverage, topic repetition, platform/content-type performance, and suggested next directions
+- PostgreSQL/pgvector runtime target with Alembic-managed persistence for signup, sessions, organization profile, onboarding, source knowledge, generated artifacts, reviews, memory, and audit logs
 
-This prototype is intentionally deterministic. It now includes the first production onboarding path, while persistent storage and live model-provider adapters remain later hardening steps.
+This prototype is intentionally deterministic. It now includes the first production onboarding path and the first persistent storage path, while live model-provider adapters remain later hardening steps.
 
 The production product must start from each user's own organization. Seeded Quainy data, deterministic providers, and local fixtures are development aids only; they are not part of the intended production experience.
 
@@ -83,7 +84,9 @@ See [Open-Source Quickstart](./docs/quickstart.md) for the full first-draft flow
 docker compose up --build
 ```
 
-The Compose setup starts the backend and frontend. PostgreSQL, pgvector, queues, and live model adapters are later hardening steps.
+The Compose setup starts Postgres with pgvector, the backend, and the frontend. By default, Compose uses `QUAINY_DATA_BACKEND=postgres` and keeps development seeding off.
+
+Database schema changes run through Alembic at backend startup. The baseline migration is in `backend/migrations/versions/202607110001_initial_schema.py`.
 
 ## Tests
 
@@ -114,6 +117,13 @@ The current backend can seed a Quainy workspace during development with:
 - approved sample context
 
 This lets a developer generate source-backed draft variants without model keys or external integrations. Production onboarding must not rely on this seeded workspace.
+
+Fixture controls:
+
+- `QUAINY_FIXTURE_MODE=none` disables deterministic sample data.
+- `QUAINY_FIXTURE_MODE=sample` enables the seeded sample workspace for local memory-mode testing.
+- `QUAINY_ENABLE_DEV_SEED=true` is supported only as a legacy development alias.
+- `QUAINY_ENV=production` blocks deterministic fixtures even if a seed flag is set.
 
 ## Current Architecture
 

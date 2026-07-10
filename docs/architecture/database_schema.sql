@@ -1,8 +1,21 @@
 -- Quainy Vouch database schema draft
--- Phase 0.2: Data Model And Architecture Lock
--- Target: PostgreSQL with pgvector in production, SQLite-compatible shapes where possible for local mode.
+-- Phase 2 target: PostgreSQL with pgvector for production persistence.
+-- Deterministic providers may remain for tests, but product data should persist here.
 
-CREATE TABLE organizations (
+CREATE EXTENSION IF NOT EXISTS vector;
+
+CREATE TABLE IF NOT EXISTS accounts (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    email TEXT NOT NULL UNIQUE,
+    password_hash TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS accounts_email_idx ON accounts (email);
+
+CREATE TABLE IF NOT EXISTS organizations (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
     website_url TEXT,
@@ -14,9 +27,20 @@ CREATE TABLE organizations (
     updated_at TIMESTAMPTZ NOT NULL
 );
 
-CREATE TABLE users (
+CREATE TABLE IF NOT EXISTS account_sessions (
+    token_hash TEXT PRIMARY KEY,
+    account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+    created_at TIMESTAMPTZ NOT NULL,
+    expires_at TIMESTAMPTZ,
+    revoked_at TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS account_sessions_account_idx ON account_sessions (account_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS users (
     id TEXT NOT NULL,
     organization_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    account_id TEXT REFERENCES accounts(id) ON DELETE SET NULL,
     name TEXT NOT NULL,
     email TEXT,
     role TEXT NOT NULL CHECK (role IN ('owner', 'editor', 'reviewer', 'viewer')),
@@ -25,9 +49,21 @@ CREATE TABLE users (
     PRIMARY KEY (organization_id, id)
 );
 
-CREATE INDEX users_org_role_idx ON users (organization_id, role);
+CREATE INDEX IF NOT EXISTS users_org_role_idx ON users (organization_id, role);
+CREATE INDEX IF NOT EXISTS users_account_idx ON users (account_id);
 
-CREATE TABLE approval_policies (
+CREATE TABLE IF NOT EXISTS onboarding_states (
+    organization_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+    completed_steps JSONB NOT NULL DEFAULT '[]',
+    profile_skipped BOOLEAN NOT NULL DEFAULT FALSE,
+    completed_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY (organization_id, account_id)
+);
+
+CREATE TABLE IF NOT EXISTS approval_policies (
     organization_id TEXT PRIMARY KEY REFERENCES organizations(id) ON DELETE CASCADE,
     required_reviewer_count INTEGER NOT NULL DEFAULT 1,
     require_approval_before_export BOOLEAN NOT NULL DEFAULT TRUE,
@@ -36,7 +72,7 @@ CREATE TABLE approval_policies (
     updated_at TIMESTAMPTZ NOT NULL
 );
 
-CREATE TABLE company_profiles (
+CREATE TABLE IF NOT EXISTS company_profiles (
     organization_id TEXT PRIMARY KEY REFERENCES organizations(id) ON DELETE CASCADE,
     one_liner TEXT,
     mission TEXT,
@@ -54,7 +90,7 @@ CREATE TABLE company_profiles (
     updated_at TIMESTAMPTZ NOT NULL
 );
 
-CREATE TABLE sources (
+CREATE TABLE IF NOT EXISTS sources (
     id TEXT PRIMARY KEY,
     organization_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
     source_type TEXT NOT NULL,
@@ -63,15 +99,16 @@ CREATE TABLE sources (
     visibility TEXT NOT NULL DEFAULT 'workspace',
     approval_status TEXT NOT NULL CHECK (approval_status IN ('approved', 'disabled', 'archived')),
     freshness_days INTEGER NOT NULL DEFAULT 180,
+    raw_text TEXT NOT NULL DEFAULT '',
     last_ingested_at TIMESTAMPTZ,
     created_by TEXT,
     created_at TIMESTAMPTZ NOT NULL,
     updated_at TIMESTAMPTZ NOT NULL
 );
 
-CREATE INDEX sources_organization_status_idx ON sources (organization_id, approval_status);
+CREATE INDEX IF NOT EXISTS sources_organization_status_idx ON sources (organization_id, approval_status);
 
-CREATE TABLE source_documents (
+CREATE TABLE IF NOT EXISTS source_documents (
     id TEXT PRIMARY KEY,
     source_id TEXT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
     title TEXT NOT NULL,
@@ -83,9 +120,9 @@ CREATE TABLE source_documents (
     created_at TIMESTAMPTZ NOT NULL
 );
 
-CREATE UNIQUE INDEX source_documents_source_hash_idx ON source_documents (source_id, content_hash);
+CREATE UNIQUE INDEX IF NOT EXISTS source_documents_source_hash_idx ON source_documents (source_id, content_hash);
 
-CREATE TABLE source_chunks (
+CREATE TABLE IF NOT EXISTS source_chunks (
     id TEXT PRIMARY KEY,
     source_document_id TEXT NOT NULL REFERENCES source_documents(id) ON DELETE CASCADE,
     organization_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
@@ -97,9 +134,9 @@ CREATE TABLE source_chunks (
     created_at TIMESTAMPTZ NOT NULL
 );
 
-CREATE INDEX source_chunks_org_source_idx ON source_chunks (organization_id, source_id);
+CREATE INDEX IF NOT EXISTS source_chunks_org_source_idx ON source_chunks (organization_id, source_id);
 
-CREATE TABLE content_opportunities (
+CREATE TABLE IF NOT EXISTS content_opportunities (
     id TEXT PRIMARY KEY,
     organization_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
     title TEXT NOT NULL,
@@ -114,39 +151,75 @@ CREATE TABLE content_opportunities (
     created_at TIMESTAMPTZ NOT NULL
 );
 
-CREATE INDEX content_opportunities_org_status_idx ON content_opportunities (organization_id, status);
+CREATE INDEX IF NOT EXISTS content_opportunities_org_status_idx ON content_opportunities (organization_id, status);
 
-CREATE TABLE calendar_events (
+CREATE TABLE IF NOT EXISTS calendar_events (
     id TEXT PRIMARY KEY,
     organization_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
     title TEXT NOT NULL,
     event_type TEXT NOT NULL CHECK (event_type IN ('company', 'public')),
-    starts_at TIMESTAMPTZ NOT NULL,
-    ends_at TIMESTAMPTZ,
+    event_date TIMESTAMPTZ NOT NULL,
     description TEXT,
     relevance_terms JSONB NOT NULL DEFAULT '[]',
     created_by TEXT,
     created_at TIMESTAMPTZ NOT NULL
 );
 
-CREATE INDEX calendar_events_org_start_idx ON calendar_events (organization_id, starts_at);
+ALTER TABLE calendar_events ADD COLUMN IF NOT EXISTS event_date TIMESTAMPTZ;
+ALTER TABLE calendar_events ADD COLUMN IF NOT EXISTS created_by TEXT;
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'calendar_events' AND column_name = 'starts_at'
+    ) THEN
+        ALTER TABLE calendar_events ALTER COLUMN starts_at DROP NOT NULL;
+        UPDATE calendar_events SET event_date = starts_at WHERE event_date IS NULL AND starts_at IS NOT NULL;
+    END IF;
+END $$;
 
-CREATE TABLE trend_signals (
+CREATE INDEX IF NOT EXISTS calendar_events_org_start_idx ON calendar_events (organization_id, event_date);
+
+CREATE TABLE IF NOT EXISTS trend_signals (
     id TEXT PRIMARY KEY,
     organization_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
     title TEXT NOT NULL,
     summary TEXT NOT NULL,
-    source_name TEXT NOT NULL,
-    source_url TEXT,
-    observed_at TIMESTAMPTZ NOT NULL,
+    industry TEXT,
+    source_uri TEXT,
     relevance_terms JSONB NOT NULL DEFAULT '[]',
     created_by TEXT,
     created_at TIMESTAMPTZ NOT NULL
 );
 
-CREATE INDEX trend_signals_org_observed_idx ON trend_signals (organization_id, observed_at DESC);
+CREATE INDEX IF NOT EXISTS trend_signals_org_observed_idx ON trend_signals (organization_id, created_at DESC);
 
-CREATE TABLE content_briefs (
+ALTER TABLE trend_signals ADD COLUMN IF NOT EXISTS industry TEXT;
+ALTER TABLE trend_signals ADD COLUMN IF NOT EXISTS source_uri TEXT;
+ALTER TABLE trend_signals ADD COLUMN IF NOT EXISTS created_by TEXT;
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'trend_signals' AND column_name = 'source_name'
+    ) THEN
+        ALTER TABLE trend_signals ALTER COLUMN source_name DROP NOT NULL;
+    END IF;
+    IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'trend_signals' AND column_name = 'observed_at'
+    ) THEN
+        ALTER TABLE trend_signals ALTER COLUMN observed_at DROP NOT NULL;
+    END IF;
+    IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'trend_signals' AND column_name = 'source_url'
+    ) THEN
+        UPDATE trend_signals SET source_uri = source_url WHERE source_uri IS NULL AND source_url IS NOT NULL;
+    END IF;
+END $$;
+
+CREATE TABLE IF NOT EXISTS content_briefs (
     id TEXT PRIMARY KEY,
     opportunity_id TEXT NOT NULL REFERENCES content_opportunities(id) ON DELETE CASCADE,
     organization_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
@@ -163,7 +236,7 @@ CREATE TABLE content_briefs (
     created_at TIMESTAMPTZ NOT NULL
 );
 
-CREATE TABLE drafts (
+CREATE TABLE IF NOT EXISTS drafts (
     id TEXT PRIMARY KEY,
     content_brief_id TEXT NOT NULL REFERENCES content_briefs(id) ON DELETE CASCADE,
     organization_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
@@ -188,10 +261,10 @@ CREATE TABLE drafts (
     updated_at TIMESTAMPTZ NOT NULL
 );
 
-CREATE INDEX drafts_org_status_idx ON drafts (organization_id, status);
-CREATE INDEX drafts_brief_idx ON drafts (content_brief_id);
+CREATE INDEX IF NOT EXISTS drafts_org_status_idx ON drafts (organization_id, status);
+CREATE INDEX IF NOT EXISTS drafts_brief_idx ON drafts (content_brief_id);
 
-CREATE TABLE claims (
+CREATE TABLE IF NOT EXISTS claims (
     id TEXT PRIMARY KEY,
     draft_id TEXT NOT NULL REFERENCES drafts(id) ON DELETE CASCADE,
     text TEXT NOT NULL,
@@ -202,7 +275,7 @@ CREATE TABLE claims (
     risk_reason TEXT
 );
 
-CREATE TABLE approval_decisions (
+CREATE TABLE IF NOT EXISTS approval_decisions (
     id TEXT PRIMARY KEY,
     draft_id TEXT NOT NULL REFERENCES drafts(id) ON DELETE CASCADE,
     decision TEXT NOT NULL CHECK (decision IN ('approve', 'reject', 'request_changes', 'regenerate', 'schedule', 'export', 'publish')),
@@ -214,9 +287,9 @@ CREATE TABLE approval_decisions (
     created_at TIMESTAMPTZ NOT NULL
 );
 
-CREATE INDEX approval_decisions_draft_idx ON approval_decisions (draft_id);
+CREATE INDEX IF NOT EXISTS approval_decisions_draft_idx ON approval_decisions (draft_id);
 
-CREATE TABLE post_memory (
+CREATE TABLE IF NOT EXISTS post_memory (
     id TEXT PRIMARY KEY,
     organization_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
     platform TEXT NOT NULL,
@@ -232,9 +305,9 @@ CREATE TABLE post_memory (
     performance_snapshot JSONB NOT NULL DEFAULT '{}'
 );
 
-CREATE INDEX post_memory_org_platform_idx ON post_memory (organization_id, platform, content_type);
+CREATE INDEX IF NOT EXISTS post_memory_org_platform_idx ON post_memory (organization_id, platform, content_type);
 
-CREATE TABLE preference_suggestions (
+CREATE TABLE IF NOT EXISTS preference_suggestions (
     id TEXT PRIMARY KEY,
     organization_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
     kind TEXT NOT NULL CHECK (kind IN ('voice_phrase', 'rejected_pattern', 'memory_update')),
@@ -248,9 +321,9 @@ CREATE TABLE preference_suggestions (
     decided_at TIMESTAMPTZ
 );
 
-CREATE INDEX preference_suggestions_org_status_idx ON preference_suggestions (organization_id, status);
+CREATE INDEX IF NOT EXISTS preference_suggestions_org_status_idx ON preference_suggestions (organization_id, status);
 
-CREATE TABLE linkedin_integrations (
+CREATE TABLE IF NOT EXISTS linkedin_integrations (
     organization_id TEXT PRIMARY KEY REFERENCES organizations(id) ON DELETE CASCADE,
     selected_page_urn TEXT,
     selected_page_name TEXT,
@@ -260,7 +333,7 @@ CREATE TABLE linkedin_integrations (
     updated_at TIMESTAMPTZ NOT NULL
 );
 
-CREATE TABLE publish_results (
+CREATE TABLE IF NOT EXISTS publish_results (
     id TEXT PRIMARY KEY,
     draft_id TEXT NOT NULL REFERENCES drafts(id) ON DELETE CASCADE,
     provider TEXT NOT NULL,
@@ -274,9 +347,9 @@ CREATE TABLE publish_results (
     published_at TIMESTAMPTZ
 );
 
-CREATE INDEX publish_results_draft_idx ON publish_results (draft_id, requested_at DESC);
+CREATE INDEX IF NOT EXISTS publish_results_draft_idx ON publish_results (draft_id, requested_at DESC);
 
-CREATE TABLE audit_logs (
+CREATE TABLE IF NOT EXISTS audit_logs (
     id TEXT PRIMARY KEY,
     organization_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
     actor_id TEXT,
@@ -287,4 +360,4 @@ CREATE TABLE audit_logs (
     created_at TIMESTAMPTZ NOT NULL
 );
 
-CREATE INDEX audit_logs_org_created_idx ON audit_logs (organization_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS audit_logs_org_created_idx ON audit_logs (organization_id, created_at DESC);

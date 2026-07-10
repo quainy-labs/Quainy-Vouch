@@ -1,6 +1,6 @@
 from fastapi.testclient import TestClient
 
-from app.main import app, store
+from app.main import app, fixture_mode, store
 
 
 client = TestClient(app)
@@ -8,6 +8,27 @@ client = TestClient(app)
 
 def auth_header(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
+
+
+def test_fixture_mode_blocks_deterministic_seed_in_production(monkeypatch):
+    monkeypatch.setenv("QUAINY_ENV", "production")
+    monkeypatch.setenv("QUAINY_ENABLE_DEV_SEED", "true")
+
+    try:
+        fixture_mode()
+    except RuntimeError as error:
+        assert "Deterministic fixtures cannot be enabled" in str(error)
+    else:
+        raise AssertionError("Production mode must not allow deterministic fixtures.")
+
+
+def test_fixture_mode_keeps_test_memory_seed_available(monkeypatch):
+    monkeypatch.delenv("QUAINY_ENV", raising=False)
+    monkeypatch.delenv("QUAINY_DATA_BACKEND", raising=False)
+    monkeypatch.delenv("QUAINY_ENABLE_DEV_SEED", raising=False)
+    monkeypatch.delenv("QUAINY_FIXTURE_MODE", raising=False)
+
+    assert fixture_mode() == "sample"
 
 
 def test_signup_login_and_current_workspace_start_from_user_organization():
@@ -195,3 +216,78 @@ def test_authentication_is_required_and_tokens_cannot_manage_other_org_sources()
 
     assert unauthenticated.status_code == 401
     assert cross_org.status_code == 404
+
+
+def test_authenticated_tokens_are_enforced_on_later_workflow_mutations():
+    first = client.post(
+        "/auth/signup",
+        json={
+            "name": "Route Sweep Owner",
+            "email": "route-sweep-owner@example.com",
+            "password": "route-sweep-pass",
+            "organization_name": "Route Sweep Org",
+        },
+    ).json()
+    second = client.post(
+        "/auth/signup",
+        json={
+            "name": "Other Route Owner",
+            "email": "other-route-owner@example.com",
+            "password": "other-route-pass",
+            "organization_name": "Other Route Org",
+        },
+    ).json()
+    org_id = first["workspace"]["organization"]["id"]
+    headers = auth_header(first["token"])
+
+    client.patch(
+        f"/organizations/{org_id}/profile",
+        json={
+            "one_liner": "Turns source-backed route checks into safer content workflows.",
+            "content_pillars": ["source-backed route checks"],
+        },
+        headers=headers,
+    ).raise_for_status()
+    client.post(
+        f"/organizations/{org_id}/sources",
+        json={
+            "source_type": "manual_note",
+            "title": "Route sweep source",
+            "raw_text": (
+                "Route sweep source material supports safer content workflows, reviewer checks, "
+                "draft editing, publishing decisions, and evidence-backed public posts. "
+            )
+            * 4,
+            "approval_status": "approved",
+        },
+        headers=headers,
+    ).raise_for_status()
+
+    opportunity = client.post(f"/organizations/{org_id}/opportunities/generate", headers=headers).json()["opportunities"][0]
+    brief = client.post(f"/opportunities/{opportunity['id']}/briefs", headers=headers).json()
+    draft = client.post(f"/briefs/{brief['id']}/drafts", headers=headers).json()["drafts"][0]
+
+    invalid_token = client.patch(
+        f"/drafts/{draft['id']}",
+        json={"body": "Updated draft body should not save with a bad token."},
+        headers=auth_header("not-a-real-token"),
+    )
+    cross_org = client.patch(
+        f"/drafts/{draft['id']}",
+        json={"body": "Updated draft body should not save from another organization."},
+        headers=auth_header(second["token"]),
+    )
+    calendar_invalid_token = client.post(
+        f"/organizations/{org_id}/calendar-events",
+        json={
+            "title": "Launch window",
+            "event_date": "2026-08-01T09:00:00Z",
+            "event_type": "company",
+            "description": "A calendar mutation should require a valid token when supplied.",
+        },
+        headers=auth_header("not-a-real-token"),
+    )
+
+    assert invalid_token.status_code == 401
+    assert cross_org.status_code == 404
+    assert calendar_invalid_token.status_code == 401

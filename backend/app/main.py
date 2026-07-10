@@ -67,9 +67,46 @@ from app.store import (
 
 
 ROOT = Path(__file__).resolve().parents[2]
-store = DataStore()
-ENABLE_DEV_SEED = os.getenv("QUAINY_ENABLE_DEV_SEED", "1").strip().lower() in {"1", "true", "yes"}
-SEEDED_ORG_ID = store.seed_quainy(ROOT) if ENABLE_DEV_SEED else None
+
+
+def build_store() -> DataStore:
+    data_backend = os.getenv("QUAINY_DATA_BACKEND", "memory").strip().lower()
+    if data_backend == "postgres":
+        from app.postgres_store import PostgresDataStore
+
+        database_url = os.getenv("DATABASE_URL")
+        if not database_url:
+            raise RuntimeError("DATABASE_URL is required when QUAINY_DATA_BACKEND=postgres.")
+        return PostgresDataStore(database_url, ROOT / "docs" / "architecture" / "database_schema.sql")
+    return DataStore()
+
+
+store = build_store()
+
+
+def enabled(value: str | None) -> bool:
+    return (value or "").strip().lower() in {"1", "true", "yes"}
+
+
+def fixture_mode() -> str:
+    environment = os.getenv("QUAINY_ENV", "development").strip().lower()
+    data_backend = os.getenv("QUAINY_DATA_BACKEND", "memory").strip().lower()
+    explicit_mode = os.getenv("QUAINY_FIXTURE_MODE")
+    explicit_seed = os.getenv("QUAINY_ENABLE_DEV_SEED")
+
+    if environment == "production":
+        if enabled(explicit_seed) or (explicit_mode and explicit_mode.strip().lower() != "none"):
+            raise RuntimeError("Deterministic fixtures cannot be enabled when QUAINY_ENV=production.")
+        return "none"
+    if explicit_mode:
+        return explicit_mode.strip().lower()
+    if explicit_seed is not None:
+        return "sample" if enabled(explicit_seed) else "none"
+    return "sample" if data_backend == "memory" else "none"
+
+
+FIXTURE_MODE = fixture_mode()
+SEEDED_ORG_ID = store.seed_quainy(ROOT) if FIXTURE_MODE == "sample" else None
 
 app = FastAPI(title="Quainy Vouch API", version="0.1.0")
 app.add_middleware(
@@ -119,6 +156,13 @@ def actor_from_auth(
     if token:
         return store.actor_id_for_token(token, organization_id)
     return fallback_actor_id or "local_user"
+
+
+def actor_from_optional_auth(organization_id: str, authorization: str | None) -> str | None:
+    token = bearer_token(authorization)
+    if not token:
+        return None
+    return store.actor_id_for_token(token, organization_id)
 
 
 @app.get("/health")
@@ -207,9 +251,16 @@ def get_organization(organization_id: str) -> Organization:
 
 
 @app.patch("/organizations/{organization_id}", response_model=Organization)
-def update_organization(organization_id: str, payload: OrganizationUpdate) -> Organization:
+def update_organization(
+    organization_id: str,
+    payload: OrganizationUpdate,
+    authorization: str | None = Header(default=None),
+) -> Organization:
     try:
+        actor_from_optional_auth(organization_id, authorization)
         return store.update_organization(organization_id, payload)
+    except AuthenticationError as error:
+        raise authentication_failed(error) from error
     except NotFoundError as error:
         raise not_found(error) from error
 
@@ -339,9 +390,16 @@ def get_linkedin_integration(organization_id: str) -> LinkedInIntegration:
 
 
 @app.patch("/organizations/{organization_id}/linkedin-integration", response_model=LinkedInIntegration)
-def update_linkedin_integration(organization_id: str, payload: LinkedInIntegrationUpdate) -> LinkedInIntegration:
+def update_linkedin_integration(
+    organization_id: str,
+    payload: LinkedInIntegrationUpdate,
+    authorization: str | None = Header(default=None),
+) -> LinkedInIntegration:
     try:
+        actor_from_optional_auth(organization_id, authorization)
         return store.update_linkedin_integration(organization_id, payload)
+    except AuthenticationError as error:
+        raise authentication_failed(error) from error
     except NotFoundError as error:
         raise not_found(error) from error
 
@@ -448,12 +506,19 @@ def refresh_source(
 
 
 @app.post("/organizations/{organization_id}/retrieval/query", response_model=list[RetrievalResult])
-def retrieve_source_chunks(organization_id: str, payload: RetrievalQuery) -> list[RetrievalResult]:
+def retrieve_source_chunks(
+    organization_id: str,
+    payload: RetrievalQuery,
+    authorization: str | None = Header(default=None),
+) -> list[RetrievalResult]:
     try:
+        actor_from_optional_auth(organization_id, authorization)
         return [
             RetrievalResult(chunk=chunk, source=source, score=score)
             for chunk, source, score in store.retrieve_chunks(organization_id, payload.query, payload.limit)
         ]
+    except AuthenticationError as error:
+        raise authentication_failed(error) from error
     except NotFoundError as error:
         raise not_found(error) from error
 
@@ -498,9 +563,13 @@ def create_calendar_event(
     organization_id: str,
     payload: CalendarEventCreate,
     actor_id: str = "local_user",
+    authorization: str | None = Header(default=None),
 ) -> CalendarEvent:
     try:
+        actor_id = actor_from_auth(organization_id, authorization, actor_id)
         return store.create_calendar_event(organization_id, payload, actor_id)
+    except AuthenticationError as error:
+        raise authentication_failed(error) from error
     except PermissionDeniedError as error:
         raise permission_denied(error) from error
     except NotFoundError as error:
@@ -520,9 +589,13 @@ def create_trend_signal(
     organization_id: str,
     payload: TrendSignalCreate,
     actor_id: str = "local_user",
+    authorization: str | None = Header(default=None),
 ) -> TrendSignal:
     try:
+        actor_id = actor_from_auth(organization_id, authorization, actor_id)
         return store.create_trend_signal(organization_id, payload, actor_id)
+    except AuthenticationError as error:
+        raise authentication_failed(error) from error
     except PermissionDeniedError as error:
         raise permission_denied(error) from error
     except NotFoundError as error:
@@ -530,10 +603,16 @@ def create_trend_signal(
 
 
 @app.post("/organizations/{organization_id}/trend-opportunities/generate")
-def generate_trend_opportunities(organization_id: str) -> dict[str, object]:
+def generate_trend_opportunities(
+    organization_id: str,
+    authorization: str | None = Header(default=None),
+) -> dict[str, object]:
     try:
+        actor_from_optional_auth(organization_id, authorization)
         opportunities = store.generate_trend_opportunities(organization_id)
         return {"opportunities": opportunities}
+    except AuthenticationError as error:
+        raise authentication_failed(error) from error
     except NotFoundError as error:
         raise not_found(error) from error
 
@@ -594,9 +673,17 @@ def get_draft(draft_id: str) -> Draft:
 
 
 @app.patch("/drafts/{draft_id}", response_model=Draft)
-def update_draft(draft_id: str, payload: DraftUpdate) -> Draft:
+def update_draft(
+    draft_id: str,
+    payload: DraftUpdate,
+    authorization: str | None = Header(default=None),
+) -> Draft:
     try:
+        draft = store.get_draft(draft_id)
+        actor_from_optional_auth(draft.organization_id, authorization)
         return store.update_draft_body(draft_id, payload.body)
+    except AuthenticationError as error:
+        raise authentication_failed(error) from error
     except NotFoundError as error:
         raise not_found(error) from error
 
@@ -632,9 +719,16 @@ def reviewer_package(draft_id: str) -> ReviewerPackage:
 
 
 @app.post("/drafts/{draft_id}/regenerate", response_model=DraftCreateResult)
-def regenerate_draft(draft_id: str) -> DraftCreateResult:
+def regenerate_draft(
+    draft_id: str,
+    authorization: str | None = Header(default=None),
+) -> DraftCreateResult:
     try:
+        draft = store.get_draft(draft_id)
+        actor_from_optional_auth(draft.organization_id, authorization)
         return DraftCreateResult(drafts=store.regenerate_drafts_for_draft(draft_id))
+    except AuthenticationError as error:
+        raise authentication_failed(error) from error
     except NotFoundError as error:
         raise not_found(error) from error
 
@@ -668,9 +762,17 @@ def approve_draft(
 
 
 @app.post("/drafts/{draft_id}/reject")
-def reject_draft(draft_id: str, payload: ReviewDecisionCreate) -> object:
+def reject_draft(
+    draft_id: str,
+    payload: ReviewDecisionCreate,
+    authorization: str | None = Header(default=None),
+) -> object:
     try:
+        draft = store.get_draft(draft_id)
+        actor_from_optional_auth(draft.organization_id, authorization)
         return store.reject_draft(draft_id, payload)
+    except AuthenticationError as error:
+        raise authentication_failed(error) from error
     except ReviewDecisionRequiredError as error:
         raise bad_review_decision(error) from error
     except NotFoundError as error:
@@ -678,9 +780,16 @@ def reject_draft(draft_id: str, payload: ReviewDecisionCreate) -> object:
 
 
 @app.post("/drafts/{draft_id}/export")
-def export_draft(draft_id: str) -> object:
+def export_draft(
+    draft_id: str,
+    authorization: str | None = Header(default=None),
+) -> object:
     try:
+        draft = store.get_draft(draft_id)
+        actor_from_optional_auth(draft.organization_id, authorization)
         return store.export_draft(draft_id)
+    except AuthenticationError as error:
+        raise authentication_failed(error) from error
     except ApprovalBlockedError as error:
         raise approval_blocked(error) from error
     except NotFoundError as error:
@@ -688,17 +797,33 @@ def export_draft(draft_id: str) -> object:
 
 
 @app.post("/drafts/{draft_id}/schedule")
-def schedule_draft(draft_id: str, payload: DraftScheduleCreate) -> object:
+def schedule_draft(
+    draft_id: str,
+    payload: DraftScheduleCreate,
+    authorization: str | None = Header(default=None),
+) -> object:
     try:
+        draft = store.get_draft(draft_id)
+        actor_from_optional_auth(draft.organization_id, authorization)
         return store.schedule_draft(draft_id, payload.scheduled_for, payload.reason)
+    except AuthenticationError as error:
+        raise authentication_failed(error) from error
     except NotFoundError as error:
         raise not_found(error) from error
 
 
 @app.post("/drafts/{draft_id}/publish/linkedin", response_model=PublishResult)
-def publish_draft_to_linkedin(draft_id: str, payload: DraftPublishCreate) -> PublishResult:
+def publish_draft_to_linkedin(
+    draft_id: str,
+    payload: DraftPublishCreate,
+    authorization: str | None = Header(default=None),
+) -> PublishResult:
     try:
+        draft = store.get_draft(draft_id)
+        actor_from_optional_auth(draft.organization_id, authorization)
         return store.publish_draft_to_linkedin(draft_id, payload)
+    except AuthenticationError as error:
+        raise authentication_failed(error) from error
     except ApprovalBlockedError as error:
         raise approval_blocked(error) from error
     except NotFoundError as error:
@@ -719,9 +844,15 @@ def list_preference_suggestions(organization_id: str) -> list[PreferenceSuggesti
 
 
 @app.post("/organizations/{organization_id}/preference-suggestions/generate", response_model=list[PreferenceSuggestion])
-def generate_preference_suggestions(organization_id: str) -> list[PreferenceSuggestion]:
+def generate_preference_suggestions(
+    organization_id: str,
+    authorization: str | None = Header(default=None),
+) -> list[PreferenceSuggestion]:
     try:
+        actor_from_optional_auth(organization_id, authorization)
         return store.generate_preference_suggestions(organization_id)
+    except AuthenticationError as error:
+        raise authentication_failed(error) from error
     except NotFoundError as error:
         raise not_found(error) from error
 
@@ -731,9 +862,14 @@ def approve_preference_suggestion(
     suggestion_id: str,
     payload: PreferenceSuggestionDecision,
     actor_id: str = "local_user",
+    authorization: str | None = Header(default=None),
 ) -> PreferenceSuggestion:
     try:
+        suggestion = store.get_preference_suggestion(suggestion_id)
+        actor_id = actor_from_auth(suggestion.organization_id, authorization, actor_id)
         return store.approve_preference_suggestion(suggestion_id, payload, actor_id)
+    except AuthenticationError as error:
+        raise authentication_failed(error) from error
     except PermissionDeniedError as error:
         raise permission_denied(error) from error
     except NotFoundError as error:
@@ -745,9 +881,14 @@ def dismiss_preference_suggestion(
     suggestion_id: str,
     payload: PreferenceSuggestionDecision,
     actor_id: str = "local_user",
+    authorization: str | None = Header(default=None),
 ) -> PreferenceSuggestion:
     try:
+        suggestion = store.get_preference_suggestion(suggestion_id)
+        actor_id = actor_from_auth(suggestion.organization_id, authorization, actor_id)
         return store.dismiss_preference_suggestion(suggestion_id, payload, actor_id)
+    except AuthenticationError as error:
+        raise authentication_failed(error) from error
     except PermissionDeniedError as error:
         raise permission_denied(error) from error
     except NotFoundError as error:
@@ -755,17 +896,31 @@ def dismiss_preference_suggestion(
 
 
 @app.post("/memory/{memory_id}/performance", response_model=PostMemory)
-def record_memory_performance(memory_id: str, payload: PerformanceMetricsCreate) -> PostMemory:
+def record_memory_performance(
+    memory_id: str,
+    payload: PerformanceMetricsCreate,
+    authorization: str | None = Header(default=None),
+) -> PostMemory:
     try:
+        memory_item = store.get_memory(memory_id)
+        actor_from_optional_auth(memory_item.organization_id, authorization)
         return store.record_performance_metrics(memory_id, payload)
+    except AuthenticationError as error:
+        raise authentication_failed(error) from error
     except NotFoundError as error:
         raise not_found(error) from error
 
 
 @app.post("/organizations/{organization_id}/analytics/import", response_model=list[PostMemory])
-def import_linkedin_analytics(organization_id: str) -> list[PostMemory]:
+def import_linkedin_analytics(
+    organization_id: str,
+    authorization: str | None = Header(default=None),
+) -> list[PostMemory]:
     try:
+        actor_from_optional_auth(organization_id, authorization)
         return store.import_linkedin_analytics(organization_id)
+    except AuthenticationError as error:
+        raise authentication_failed(error) from error
     except NotFoundError as error:
         raise not_found(error) from error
 
