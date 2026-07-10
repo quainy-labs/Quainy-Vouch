@@ -23,6 +23,13 @@ const API_BASES = Array.from(
   new Set([import.meta.env.VITE_API_BASE, "http://127.0.0.1:8000", "http://127.0.0.1:8001"].filter(Boolean) as string[]),
 );
 let resolvedApiBase: string | null = null;
+const AUTH_TOKEN_KEY = "quainy_vouch_auth_token";
+
+type Account = {
+  id: string;
+  name: string;
+  email: string;
+};
 
 type Organization = {
   id: string;
@@ -258,6 +265,15 @@ type WorkspaceUser = {
   role: "owner" | "editor" | "reviewer" | "viewer";
 };
 
+type OnboardingState = {
+  organization_id: string;
+  account_id: string;
+  completed_steps: string[];
+  profile_skipped: boolean;
+  completion_percent: number;
+  updated_at: string;
+};
+
 type ApprovalPolicy = {
   organization_id: string;
   required_reviewer_count: number;
@@ -332,6 +348,32 @@ type Bootstrap = {
   profile: Profile;
   sources: Source[];
   opportunities: Opportunity[];
+};
+
+type CurrentWorkspace = {
+  account: Account;
+  organization: Organization;
+  user: WorkspaceUser;
+  profile: Profile;
+  sources: Source[];
+  onboarding: OnboardingState;
+};
+
+type AuthResponse = {
+  token: string;
+  workspace: CurrentWorkspace;
+};
+
+type AuthForm = {
+  name: string;
+  email: string;
+  password: string;
+  organization_name: string;
+  website_url: string;
+  industry: string;
+  description: string;
+  audience_summary: string;
+  default_timezone: string;
 };
 
 type SetupForm = {
@@ -424,26 +466,75 @@ type ViewItem = {
   badge: string;
 };
 
+function fieldNameFromLocation(location: unknown[]): string {
+  const parts = location
+    .filter((item) => typeof item === "string")
+    .filter((item) => !["body", "query", "path"].includes(item));
+  const field = parts[parts.length - 1];
+  if (!field) return "Request";
+  return field.replace(/_/g, " ");
+}
+
+async function responseErrorMessage(response: Response): Promise<string> {
+  const fallback = `Request failed with status ${response.status}.`;
+  let payload: unknown = null;
+  try {
+    payload = await response.json();
+  } catch {
+    try {
+      const text = await response.text();
+      return text || fallback;
+    } catch {
+      return fallback;
+    }
+  }
+  if (payload && typeof payload === "object" && "detail" in payload) {
+    const detail = (payload as { detail: unknown }).detail;
+    if (typeof detail === "string") return detail;
+    if (Array.isArray(detail)) {
+      const messages = detail
+        .map((item) => {
+          if (!item || typeof item !== "object") return "";
+          const issue = item as { loc?: unknown[]; msg?: unknown };
+          const label = Array.isArray(issue.loc) ? fieldNameFromLocation(issue.loc) : "Field";
+          return `${label}: ${String(issue.msg ?? "Invalid value")}`;
+        })
+        .filter(Boolean);
+      if (messages.length > 0) return messages.join("\n");
+    }
+  }
+  return fallback;
+}
+
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const bases = resolvedApiBase ? [resolvedApiBase, ...API_BASES.filter((base) => base !== resolvedApiBase)] : API_BASES;
   let lastError: unknown = null;
+  const token = localStorage.getItem(AUTH_TOKEN_KEY);
   for (const base of bases) {
+    let response: Response;
     try {
-      const response = await fetch(`${base}${path}`, {
-        headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
+      response = await fetch(`${base}${path}`, {
         ...init,
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          ...(init?.headers ?? {}),
+        },
       });
-      if (!response.ok) {
-        throw new Error(await response.text());
-      }
-      resolvedApiBase = base;
-      return response.json();
     } catch (error) {
       lastError = error;
+      continue;
     }
+    resolvedApiBase = base;
+    if (!response.ok) {
+      throw new Error(await responseErrorMessage(response));
+    }
+    return response.json();
   }
   throw new Error(
-    `Could not reach the Quainy API at ${API_BASES.join(" or ")}. ${lastError instanceof Error ? lastError.message : ""}`,
+    `The workspace service is unavailable. Please check that the app services are running and try again.${
+      lastError instanceof Error ? ` ${lastError.message}` : ""
+    }`,
   );
 }
 
@@ -456,6 +547,69 @@ function textToList(value: string): string[] {
     .split("\n")
     .map((item) => item.trim())
     .filter(Boolean);
+}
+
+function validateEmail(value: string): boolean {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
+}
+
+function validateHttpUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.protocol === "http:" || url.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+function validateAuthForm(form: AuthForm, mode: "signup" | "login"): string[] {
+  const errors: string[] = [];
+  if (!validateEmail(form.email)) errors.push("Enter a valid email address.");
+  if (!form.password.trim()) {
+    errors.push("Password is required.");
+  } else if (mode === "signup" && form.password.trim().length < 8) {
+    errors.push("Password must be at least 8 characters.");
+  }
+  if (mode === "signup") {
+    if (!form.name.trim()) errors.push("Your name is required.");
+    if (!form.organization_name.trim()) errors.push("Organization name is required.");
+    if (form.website_url.trim() && !validateHttpUrl(form.website_url)) errors.push("Website must be a valid http(s) URL.");
+  }
+  return errors;
+}
+
+function validateSetupForm(form: SetupForm): string[] {
+  const errors: string[] = [];
+  if (!form.name.trim()) errors.push("Organization name is required.");
+  if (!form.default_timezone.trim()) errors.push("Timezone is required.");
+  if (form.website_url.trim() && !validateHttpUrl(form.website_url)) errors.push("Website must be a valid http(s) URL.");
+  return errors;
+}
+
+function validateSourceForm(form: SourceForm): string[] {
+  const errors: string[] = [];
+  const rawText = form.raw_text.trim();
+  const uri = form.uri.trim();
+  if (!form.title.trim()) errors.push("Source title is required.");
+  if (rawText.length < 20) errors.push("Source text must contain at least 20 characters.");
+  if (Number(form.freshness_days) < 1) errors.push("Freshness window must be at least 1 day.");
+  if (form.source_type === "url") {
+    if (!uri) errors.push("Public page URL is required.");
+    if (uri && !validateHttpUrl(uri)) errors.push("Public page URL must be a valid http(s) URL.");
+  }
+  if (form.source_type === "github_release") {
+    if (!uri) errors.push("GitHub release or repo URL is required.");
+    if (uri && (!validateHttpUrl(uri) || new URL(uri).hostname.toLowerCase() !== "github.com")) {
+      errors.push("GitHub source must be a valid github.com URL.");
+    }
+  }
+  if (form.source_type === "notion_page") {
+    const isNotionProtocol = uri.startsWith("notion://page/");
+    const isNotionUrl = validateHttpUrl(uri) && new URL(uri).hostname.endsWith("notion.so");
+    if (!uri) errors.push("Notion page URL is required.");
+    if (uri && !isNotionProtocol && !isNotionUrl) errors.push("Notion source must be a selected Notion page URL.");
+  }
+  return errors;
 }
 
 function draftFormatLabel(draft: Draft | null): string {
@@ -571,6 +725,15 @@ function setupFromBootstrap(data: Bootstrap): SetupForm {
   };
 }
 
+function bootstrapFromCurrentWorkspace(workspace: CurrentWorkspace, opportunities: Opportunity[] = []): Bootstrap {
+  return {
+    organization: workspace.organization,
+    profile: workspace.profile,
+    sources: workspace.sources,
+    opportunities,
+  };
+}
+
 const emptySourceForm: SourceForm = {
   source_type: "manual_note",
   title: "",
@@ -591,6 +754,18 @@ const emptyMetricsForm: MetricsForm = {
   comments: "",
   shares: "",
   clicks: "",
+};
+
+const emptyAuthForm: AuthForm = {
+  name: "",
+  email: "",
+  password: "",
+  organization_name: "",
+  website_url: "",
+  industry: "",
+  description: "",
+  audience_summary: "",
+  default_timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
 };
 
 const emptyUserForm: UserForm = {
@@ -666,10 +841,18 @@ function approvalPolicyForm(policy: ApprovalPolicy): ApprovalPolicyForm {
 }
 
 function App() {
+  const [currentUser, setCurrentUser] = useState<WorkspaceUser | null>(null);
+  const [onboarding, setOnboarding] = useState<OnboardingState | null>(null);
+  const [authMode, setAuthMode] = useState<"signup" | "login">("signup");
+  const [authForm, setAuthForm] = useState<AuthForm>(emptyAuthForm);
+  const [authErrors, setAuthErrors] = useState<string[]>([]);
+  const [authRequired, setAuthRequired] = useState(false);
   const [bootstrap, setBootstrap] = useState<Bootstrap | null>(null);
   const [bootstrapError, setBootstrapError] = useState("");
   const [setupForm, setSetupForm] = useState<SetupForm | null>(null);
+  const [setupErrors, setSetupErrors] = useState<string[]>([]);
   const [sourceForm, setSourceForm] = useState<SourceForm>(emptySourceForm);
+  const [sourceErrors, setSourceErrors] = useState<string[]>([]);
   const [sourceDraftsByType, setSourceDraftsByType] = useState<Record<string, SourceForm>>({});
   const [selectedSourceId, setSelectedSourceId] = useState<string | null>(null);
   const [sourceDetail, setSourceDetail] = useState<SourceDetail | null>(null);
@@ -710,8 +893,19 @@ function App() {
 
   async function loadWorkspace() {
     setBootstrapError("");
+    const token = localStorage.getItem(AUTH_TOKEN_KEY);
+    if (!token) {
+      setAuthRequired(true);
+      setBootstrap(null);
+      return;
+    }
     try {
-      const data = await api<Bootstrap>("/bootstrap");
+      setAuthRequired(false);
+      const current = await api<CurrentWorkspace>("/me");
+      const opportunities = await api<Opportunity[]>(`/organizations/${current.organization.id}/opportunities`);
+      const data = bootstrapFromCurrentWorkspace(current, opportunities);
+      setCurrentUser(current.user);
+      setOnboarding(current.onboarding);
       setBootstrap(data);
       setSetupForm(setupFromBootstrap(data));
       setOpportunities(sortOpportunities(data.opportunities));
@@ -738,7 +932,10 @@ function App() {
         api<TrendSignal[]>(`/organizations/${data.organization.id}/trend-signals`).then(setTrendSignals),
       ]);
     } catch (error) {
-      setBootstrapError(error instanceof Error ? error.message : "Could not load the Quainy workspace.");
+      localStorage.removeItem(AUTH_TOKEN_KEY);
+      setAuthRequired(true);
+      setBootstrap(null);
+      setBootstrapError(error instanceof Error ? error.message : "Could not load your workspace.");
     }
   }
 
@@ -772,6 +969,13 @@ function App() {
       api<ContentArtifact[]>(`/organizations/${organizationId}/content-artifacts`).then(setContentArtifacts),
       api<StrategyDashboard>(`/organizations/${organizationId}/strategy`).then(setStrategyDashboard),
     ]);
+  }
+
+  async function refreshCurrentWorkspaceState() {
+    const current = await api<CurrentWorkspace>("/me");
+    setCurrentUser(current.user);
+    setOnboarding(current.onboarding);
+    return current;
   }
 
   const healthLabel = useMemo(() => {
@@ -997,10 +1201,6 @@ function App() {
   };
   const sourceCopy = sourceTypeText[sourceForm.source_type] ?? sourceTypeText.manual_note;
   const sourceNeedsUri = Boolean(sourceCopy.uriLabel);
-  const canAddSource =
-    sourceForm.title.trim().length > 0 &&
-    sourceForm.raw_text.trim().length >= 20 &&
-    (!sourceNeedsUri || sourceForm.uri.trim().length > 0);
   const sourceAuditLogs = [...(sourceDetail?.audit_logs ?? [])].sort((left, right) => auditTimeValue(right.created_at) - auditTimeValue(left.created_at));
   const visibleSourceAuditLogs = sourceAuditLogs.slice(0, 6);
   const rankedOpportunities = useMemo(() => sortOpportunities(opportunities), [opportunities]);
@@ -1184,6 +1384,7 @@ function App() {
       setDrafts([]);
       setSelectedDraft(null);
       await refreshProductSurfaces();
+      await refreshCurrentWorkspaceState();
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Opportunity generation failed.");
     } finally {
@@ -1191,15 +1392,200 @@ function App() {
     }
   }
 
+  async function submitAuth(event: React.FormEvent) {
+    event.preventDefault();
+    const errors = validateAuthForm(authForm, authMode);
+    setAuthErrors(errors);
+    if (errors.length > 0) return;
+    setBusy(true);
+    setBootstrapError("");
+    try {
+      localStorage.removeItem(AUTH_TOKEN_KEY);
+      const response =
+        authMode === "signup"
+          ? await api<AuthResponse>("/auth/signup", {
+              method: "POST",
+              body: JSON.stringify({
+                name: authForm.name,
+                email: authForm.email,
+                password: authForm.password,
+                organization_name: authForm.organization_name,
+                website_url: authForm.website_url || null,
+                industry: authForm.industry || null,
+                description: authForm.description || null,
+                audience_summary: authForm.audience_summary || null,
+                default_timezone: authForm.default_timezone || "UTC",
+              }),
+            })
+          : await api<AuthResponse>("/auth/login", {
+              method: "POST",
+              body: JSON.stringify({
+                email: authForm.email,
+                password: authForm.password,
+              }),
+            });
+      localStorage.setItem(AUTH_TOKEN_KEY, response.token);
+      setAuthRequired(false);
+      const opportunities = await api<Opportunity[]>(`/organizations/${response.workspace.organization.id}/opportunities`);
+      const data = bootstrapFromCurrentWorkspace(response.workspace, opportunities);
+      setCurrentUser(response.workspace.user);
+      setOnboarding(response.workspace.onboarding);
+      setBootstrap(data);
+      setSetupForm(setupFromBootstrap(data));
+      setOpportunities(sortOpportunities(opportunities));
+      setVisibleOpportunityCount(12);
+      setActiveView(response.workspace.sources.length > 0 ? "studio" : "sources");
+      await Promise.allSettled([
+        api<Draft[]>(`/organizations/${response.workspace.organization.id}/calendar`).then(setCalendarItems),
+        api<LinkedInIntegration>(`/organizations/${response.workspace.organization.id}/linkedin-integration`).then(setLinkedinIntegration),
+        api<PostMemory[]>(`/organizations/${response.workspace.organization.id}/memory`).then(setMemoryItems),
+        api<AnalyticsDashboard>(`/organizations/${response.workspace.organization.id}/analytics`).then(setAnalyticsDashboard),
+        api<ContentArtifact[]>(`/organizations/${response.workspace.organization.id}/content-artifacts`).then(setContentArtifacts),
+        api<StrategyDashboard>(`/organizations/${response.workspace.organization.id}/strategy`).then(setStrategyDashboard),
+        api<WorkspaceUser[]>(`/organizations/${response.workspace.organization.id}/users`).then(setUsers),
+        api<ApprovalPolicy>(`/organizations/${response.workspace.organization.id}/approval-policy`).then((policy) => {
+          setApprovalPolicy(policy);
+          setApprovalPolicyDraft(approvalPolicyForm(policy));
+        }),
+        api<PreferenceSuggestion[]>(`/organizations/${response.workspace.organization.id}/preference-suggestions`).then(setPreferenceSuggestions),
+        api<CalendarEvent[]>(`/organizations/${response.workspace.organization.id}/calendar-events`).then(setCalendarEvents),
+        api<TrendSignal[]>(`/organizations/${response.workspace.organization.id}/trend-signals`).then(setTrendSignals),
+      ]);
+      setAuthForm(emptyAuthForm);
+      setAuthErrors([]);
+      setBootstrapError("");
+      setNotice(authMode === "signup" ? "Organization created. Add your first approved source when you are ready." : "Welcome back.");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Authentication failed.";
+      setBootstrapError(message);
+      setAuthErrors(message.split("\n"));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function signOut() {
+    localStorage.removeItem(AUTH_TOKEN_KEY);
+    setCurrentUser(null);
+    setOnboarding(null);
+    setBootstrap(null);
+    setAuthForm(emptyAuthForm);
+    setAuthErrors([]);
+    setBootstrapError("");
+    setAuthMode("login");
+    setAuthRequired(true);
+    setNotice("");
+  }
+
+  async function skipProfileForNow() {
+    if (!bootstrap) return;
+    setBusy(true);
+    try {
+      const state = await api<OnboardingState>(`/organizations/${bootstrap.organization.id}/onboarding/profile`, {
+        method: "POST",
+        body: JSON.stringify({ skip_profile: true }),
+      });
+      setOnboarding(state);
+      setActiveView("sources");
+      setNotice("Profile setup skipped for now. Add an approved source to improve recommendations.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (authRequired && !bootstrap) {
+    return (
+      <main className="auth-shell">
+        <section className="auth-panel">
+          <div className="auth-copy">
+            <p className="eyebrow">Quainy Vouch</p>
+            <h1>Turn real company work into trusted public communication.</h1>
+            <p>
+              Create your organization, add approved context when ready, and let the system surface source-backed opportunities you can brief,
+              review, publish, and learn from.
+            </p>
+          </div>
+          <form className="auth-form" onSubmit={submitAuth} autoComplete={authMode === "signup" ? "off" : "on"}>
+            <div className="auth-toggle" aria-label="Authentication mode">
+              <button type="button" className={authMode === "signup" ? "active" : ""} onClick={() => setAuthMode("signup")}>
+                Sign up
+              </button>
+              <button type="button" className={authMode === "login" ? "active" : ""} onClick={() => setAuthMode("login")}>
+                Log in
+              </button>
+            </div>
+            {authMode === "signup" && (
+              <>
+                <Field label="Your name" required>
+                  <input
+                    value={authForm.name}
+                    onChange={(event) => setAuthForm({ ...authForm, name: event.target.value })}
+                    autoComplete="name"
+                  />
+                </Field>
+                <Field label="Organization" required>
+                  <input
+                    value={authForm.organization_name}
+                    onChange={(event) => setAuthForm({ ...authForm, organization_name: event.target.value })}
+                    placeholder="Acme Labs"
+                    autoComplete="organization"
+                  />
+                </Field>
+                <Field label="Website">
+                  <input
+                    value={authForm.website_url}
+                    onChange={(event) => setAuthForm({ ...authForm, website_url: event.target.value })}
+                    placeholder="https://example.com"
+                    autoComplete="url"
+                  />
+                </Field>
+                <Field label="Industry">
+                  <input value={authForm.industry} onChange={(event) => setAuthForm({ ...authForm, industry: event.target.value })} />
+                </Field>
+                <Field label="What do you do?" wide>
+                  <textarea
+                    value={authForm.description}
+                    onChange={(event) => setAuthForm({ ...authForm, description: event.target.value })}
+                    placeholder="A short description is enough. You can improve this later."
+                  />
+                </Field>
+              </>
+            )}
+            <Field label="Email" required>
+              <input
+                value={authForm.email}
+                onChange={(event) => setAuthForm({ ...authForm, email: event.target.value })}
+                autoComplete="email"
+              />
+            </Field>
+            <Field label="Password" required>
+              <input
+                type="password"
+                value={authForm.password}
+                onChange={(event) => setAuthForm({ ...authForm, password: event.target.value })}
+                autoComplete={authMode === "signup" ? "new-password" : "current-password"}
+              />
+            </Field>
+            <ErrorList errors={authErrors} />
+            <button className="icon-button primary" type="submit" disabled={busy}>
+              <Sparkles size={18} />
+              <span>{authMode === "signup" ? "Create workspace" : "Log in"}</span>
+            </button>
+          </form>
+        </section>
+      </main>
+    );
+  }
+
   if (!bootstrap) {
     return (
       <main className="loading">
         <section className="connection-card">
           <p className="eyebrow">Quainy Vouch</p>
-          <h1>{bootstrapError ? "Backend is not connected" : "Loading workspace"}</h1>
+          <h1>{bootstrapError ? "Workspace service is unavailable" : "Loading workspace"}</h1>
           <p>
             {bootstrapError ||
-              `Connecting to the local API at ${API_BASES.join(" or ")}. Start the backend if this takes more than a moment.`}
+              "Preparing your workspace. If this takes more than a moment, check that the app services are running."}
           </p>
           {bootstrapError && (
             <div className="connection-actions">
@@ -1207,7 +1593,7 @@ function App() {
                 <RefreshCcw size={18} />
                 <span>Retry</span>
               </button>
-              <span>Run: uv run uvicorn app.main:app --reload --app-dir backend</span>
+              <span>Check the app services, then retry.</span>
             </div>
           )}
         </section>
@@ -1217,6 +1603,9 @@ function App() {
 
   async function saveSetup() {
     if (!bootstrap || !setupForm) return;
+    const errors = validateSetupForm(setupForm);
+    setSetupErrors(errors);
+    if (errors.length > 0) return;
     setBusy(true);
     try {
       const organization = await api<Organization>(`/organizations/${bootstrap.organization.id}`, {
@@ -1266,7 +1655,12 @@ function App() {
       setSelectedBrief(null);
       setDrafts([]);
       setSelectedDraft(null);
+      await refreshCurrentWorkspaceState();
+      setSetupErrors([]);
       setNotice("Workspace and voice profile saved.");
+    } catch (error) {
+      setSetupErrors((error instanceof Error ? error.message : "Workspace setup failed.").split("\n"));
+      setNotice(error instanceof Error ? error.message : "Workspace setup failed.");
     } finally {
       setBusy(false);
     }
@@ -1294,6 +1688,9 @@ function App() {
 
   async function addSource() {
     if (!bootstrap) return;
+    const errors = validateSourceForm(sourceForm);
+    setSourceErrors(errors);
+    if (errors.length > 0) return;
     setBusy(true);
     try {
       const addedSourceType = sourceForm.source_type;
@@ -1320,7 +1717,12 @@ function App() {
       setDrafts([]);
       setSelectedDraft(null);
       await refreshProductSurfaces();
+      await refreshCurrentWorkspaceState();
+      setSourceErrors([]);
       setNotice("Source added, ingested, and ready for opportunity generation.");
+    } catch (error) {
+      setSourceErrors((error instanceof Error ? error.message : "Source could not be added.").split("\n"));
+      setNotice(error instanceof Error ? error.message : "Source could not be added.");
     } finally {
       setBusy(false);
     }
@@ -1402,6 +1804,7 @@ function App() {
       setSelectedBrief(brief);
       setActiveView("studio");
       await refreshProductSurfaces();
+      await refreshCurrentWorkspaceState();
       setNotice("Brief created from approved source context.");
     } finally {
       setBusy(false);
@@ -1489,6 +1892,7 @@ function App() {
       setSelectedDraft(result.drafts[0] ?? null);
       setActiveView("studio");
       await refreshProductSurfaces();
+      await refreshCurrentWorkspaceState();
       setNotice(formatChoiceNotice(formatChoice));
     } finally {
       setBusy(false);
@@ -1528,6 +1932,7 @@ function App() {
       await refreshCalendar();
       await refreshMemoryAndAnalytics();
       await refreshProductSurfaces();
+      await refreshCurrentWorkspaceState();
       setNotice(updated.status === "pending_approval" ? "Approval recorded. More reviewer approval is required." : "Approved and stored in memory.");
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Approval failed.");
@@ -1811,9 +2216,43 @@ function App() {
         <div className="status-strip">
           <span>{healthLabel}</span>
           <span>{bootstrap.profile.content_pillars.length} pillars</span>
-          <span>Open source workspace</span>
+          <span>{onboarding ? `${onboarding.completion_percent}% onboarded` : currentUser?.role ?? "workspace"}</span>
+          <button className="text-button" onClick={signOut} type="button">Sign out</button>
         </div>
       </header>
+
+      {onboarding && onboarding.completion_percent < 75 && (
+        <section className="onboarding-banner">
+          <div>
+            <p className="eyebrow">Fast onboarding</p>
+            <h2>Start light, improve accuracy as you add context.</h2>
+            <p>
+              Add enough organization detail and one approved source to unlock better-ranked opportunities. You can refine voice, claims,
+              sources, and integrations later.
+            </p>
+          </div>
+          <div className="onboarding-progress">
+            <strong>{onboarding.completion_percent}%</strong>
+            <span>{onboarding.completed_steps.map((step) => step.replace(/_/g, " ")).join(" / ")}</span>
+          </div>
+          <div className="onboarding-actions">
+            <button className="icon-button" onClick={() => setActiveView("settings")} type="button">
+              <Save size={16} />
+              <span>Org details</span>
+            </button>
+            {!onboarding.completed_steps.includes("profile_skipped") && !onboarding.completed_steps.includes("profile_started") && (
+              <button className="icon-button" onClick={skipProfileForNow} type="button" disabled={busy}>
+                <X size={16} />
+                <span>Skip profile</span>
+              </button>
+            )}
+            <button className="icon-button primary" onClick={() => setActiveView("sources")} type="button">
+              <Upload size={16} />
+              <span>Add source</span>
+            </button>
+          </div>
+        </section>
+      )}
 
       <nav className="view-nav" aria-label="Workspace views">
         {viewItems.map((item, index) => (
@@ -1989,6 +2428,7 @@ function App() {
                   </button>
                 </div>
               </div>
+              <ErrorList errors={setupErrors} />
               <div className="section-tabs" role="tablist" aria-label="Profile sections">
                 {setupSections.map((section) => (
                   <button
@@ -2266,11 +2706,12 @@ function App() {
                 <p className="eyebrow">Source Library</p>
                 <h2>Approved company knowledge</h2>
               </div>
-              <button className="icon-button primary" onClick={addSource} disabled={busy || !canAddSource} title="Add source">
+              <button className="icon-button primary" onClick={addSource} disabled={busy} title="Add source">
                 <Plus size={18} />
                 <span>Add source</span>
               </button>
             </div>
+            <ErrorList errors={sourceErrors} />
             <div className="source-health-grid">
               <article className={`source-health-tile ${approvedSources.length > 0 ? "healthy" : "blocked"}`}>
                 <span>Approved</span>
@@ -3393,6 +3834,21 @@ function Field({ label, wide, required, children }: { label: string; wide?: bool
       </span>
       {children}
     </label>
+  );
+}
+
+function ErrorList({ errors }: { errors: string[] }) {
+  const uniqueErrors = Array.from(new Set(errors.map((error) => error.trim()).filter(Boolean)));
+  if (uniqueErrors.length === 0) return null;
+  return (
+    <div className="form-error" role="alert">
+      <strong>Check these details</strong>
+      <ul>
+        {uniqueErrors.map((error) => (
+          <li key={error}>{error}</li>
+        ))}
+      </ul>
+    </div>
   );
 }
 

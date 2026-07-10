@@ -10,6 +10,7 @@ The current codebase contains a deterministic prototype foundation:
 
 - approved source ingestion
 - sample company profile and voice rules
+- signup, login, authenticated current workspace, and onboarding progress
 - source-backed opportunity generation
 - platform-independent briefs
 - LinkedIn-style draft variants
@@ -26,7 +27,7 @@ The current codebase contains a deterministic prototype foundation:
 - company/public calendar events, industry trend signals, and relevance-gated trend opportunities
 - durable content library and strategy dashboard with pillar coverage, topic repetition, platform/content-type performance, and suggested next directions
 
-This prototype is intentionally deterministic. It proves the trust workflow before real authentication, persistent storage, live model-provider adapters, and production onboarding are introduced.
+This prototype is intentionally deterministic. It now includes the first production onboarding path, while persistent storage and live model-provider adapters remain later hardening steps.
 
 The production product must start from each user's own organization. Seeded Quainy data, deterministic providers, and local fixtures are development aids only; they are not part of the intended production experience.
 

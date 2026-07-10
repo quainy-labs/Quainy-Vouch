@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import secrets
 from pathlib import Path
 
 from app.analytics import LocalAnalyticsImportProvider, build_performance_snapshot
@@ -28,6 +30,8 @@ from app.publishing import build_linkedin_publisher
 from app.risk_checks import check_claims, high_risk_unsupported_claims, risk_check
 from app.trends import TrendOpportunityGenerator
 from app.schemas import (
+    Account,
+    AccountLogin,
     ApprovalDecision,
     ApprovalPolicy,
     ApprovalPolicyUpdate,
@@ -41,6 +45,7 @@ from app.schemas import (
     ContentBrief,
     ContentArtifact,
     ContentOpportunity,
+    CurrentWorkspace,
     DeletionReceipt,
     Decision,
     Draft,
@@ -48,6 +53,9 @@ from app.schemas import (
     DraftStatus,
     LinkedInIntegration,
     LinkedInIntegrationUpdate,
+    OnboardingDecision,
+    OnboardingState,
+    OnboardingStep,
     Organization,
     OrganizationCreate,
     OrganizationUpdate,
@@ -58,6 +66,7 @@ from app.schemas import (
     PreferenceSuggestionStatus,
     PublishResult,
     ReviewDecisionCreate,
+    SignupCreate,
     Source,
     SourceChunk,
     SourceCreate,
@@ -98,8 +107,18 @@ class PermissionDeniedError(Exception):
     pass
 
 
+class AuthenticationError(Exception):
+    pass
+
+
 class DataStore:
     def __init__(self) -> None:
+        self.accounts: dict[str, Account] = {}
+        self.account_password_hashes: dict[str, str] = {}
+        self.account_ids_by_email: dict[str, str] = {}
+        self.session_account_ids: dict[str, str] = {}
+        self.primary_organization_by_account: dict[str, str] = {}
+        self.onboarding_states: dict[tuple[str, str], OnboardingState] = {}
         self.organizations: dict[str, Organization] = {}
         self.users: dict[tuple[str, str], User] = {}
         self.approval_policies: dict[str, ApprovalPolicy] = {}
@@ -143,6 +162,151 @@ class DataStore:
         if key not in self.format_adapters:
             raise NotFoundError(f"Format adapter not found for {platform}/{content_type}")
         return self.format_adapters[key]
+
+    def _hash_password(self, password: str, salt: str | None = None) -> str:
+        active_salt = salt or secrets.token_hex(16)
+        iterations = 210_000
+        digest = hashlib.pbkdf2_hmac(
+            "sha256",
+            password.encode("utf-8"),
+            active_salt.encode("utf-8"),
+            iterations,
+        ).hex()
+        return f"pbkdf2_sha256${iterations}${active_salt}${digest}"
+
+    def _verify_password(self, password: str, stored_hash: str) -> bool:
+        if stored_hash.startswith("pbkdf2_sha256$"):
+            _algorithm, iterations, salt, expected_digest = stored_hash.split("$", 3)
+            digest = hashlib.pbkdf2_hmac(
+                "sha256",
+                password.encode("utf-8"),
+                salt.encode("utf-8"),
+                int(iterations),
+            ).hex()
+            return secrets.compare_digest(digest, expected_digest)
+        salt, expected_digest = stored_hash.split(":", 1)
+        digest = hashlib.sha256(f"{salt}:{password}".encode("utf-8")).hexdigest()
+        return secrets.compare_digest(digest, expected_digest)
+
+    def signup(self, payload: SignupCreate) -> tuple[str, CurrentWorkspace]:
+        email = payload.email.strip().lower()
+        if email in self.account_ids_by_email:
+            raise PermissionDeniedError("An account with this email already exists.")
+        account = Account(name=payload.name.strip(), email=email)
+        self.accounts[account.id] = account
+        self.account_ids_by_email[email] = account.id
+        self.account_password_hashes[account.id] = self._hash_password(payload.password)
+        org = self.create_organization(
+            OrganizationCreate(
+                name=payload.organization_name,
+                website_url=payload.website_url,
+                industry=payload.industry,
+                description=payload.description,
+                audience_summary=payload.audience_summary,
+                default_timezone=payload.default_timezone,
+            )
+        )
+        self.users.pop((org.id, "local_user"), None)
+        user = User(
+            id=account.id,
+            organization_id=org.id,
+            name=account.name,
+            email=account.email,
+            role=UserRole.owner,
+        )
+        self.users[(org.id, user.id)] = user
+        self.primary_organization_by_account[account.id] = org.id
+        onboarding = OnboardingState(
+            organization_id=org.id,
+            account_id=account.id,
+            completed_steps=[
+                OnboardingStep.account_created,
+                OnboardingStep.organization_created,
+            ],
+        )
+        self.onboarding_states[(org.id, account.id)] = onboarding
+        token = self._create_session(account.id)
+        self.log(org.id, "auth.signup", "account", account.id, {"email": account.email}, account.id)
+        return token, self.current_workspace(token)
+
+    def login(self, payload: AccountLogin) -> tuple[str, CurrentWorkspace]:
+        account_id = self.account_ids_by_email.get(payload.email.strip().lower())
+        if not account_id or not self._verify_password(payload.password, self.account_password_hashes[account_id]):
+            raise AuthenticationError("Invalid email or password.")
+        token = self._create_session(account_id)
+        return token, self.current_workspace(token)
+
+    def _create_session(self, account_id: str) -> str:
+        token = f"qv_{secrets.token_urlsafe(32)}"
+        self.session_account_ids[token] = account_id
+        return token
+
+    def account_for_token(self, token: str | None) -> Account:
+        if not token or token not in self.session_account_ids:
+            raise AuthenticationError("Authentication required.")
+        account_id = self.session_account_ids[token]
+        if account_id not in self.accounts:
+            raise AuthenticationError("Authentication required.")
+        return self.accounts[account_id]
+
+    def current_workspace(self, token: str) -> CurrentWorkspace:
+        account = self.account_for_token(token)
+        organization_id = self.primary_organization_by_account.get(account.id)
+        if not organization_id:
+            raise NotFoundError("No organization found for this account.")
+        user = self.get_user(organization_id, account.id)
+        onboarding = self.get_onboarding_state(organization_id, account.id)
+        return CurrentWorkspace(
+            account=account,
+            organization=self.get_organization(organization_id),
+            user=user,
+            profile=self.profiles[organization_id],
+            sources=self.list_sources(organization_id),
+            onboarding=onboarding,
+        )
+
+    def actor_id_for_token(self, token: str | None, organization_id: str) -> str:
+        account = self.account_for_token(token)
+        self.get_user(organization_id, account.id)
+        return account.id
+
+    def get_onboarding_state(self, organization_id: str, account_id: str) -> OnboardingState:
+        key = (organization_id, account_id)
+        if key not in self.onboarding_states:
+            self.onboarding_states[key] = OnboardingState(
+                organization_id=organization_id,
+                account_id=account_id,
+                completed_steps=[OnboardingStep.organization_created],
+            )
+        return self.onboarding_states[key]
+
+    def mark_onboarding_step(
+        self,
+        organization_id: str,
+        account_id: str,
+        step: OnboardingStep,
+        profile_skipped: bool | None = None,
+    ) -> OnboardingState:
+        state = self.get_onboarding_state(organization_id, account_id)
+        completed = list(state.completed_steps)
+        if step not in completed:
+            completed.append(step)
+        updates = {"completed_steps": completed, "updated_at": now_utc()}
+        if profile_skipped is not None:
+            updates["profile_skipped"] = profile_skipped
+        updated = state.model_copy(update=updates)
+        self.onboarding_states[(organization_id, account_id)] = updated
+        self.log(organization_id, "onboarding.step_completed", "onboarding", account_id, {"step": step.value}, account_id)
+        return updated
+
+    def decide_onboarding_profile(
+        self,
+        organization_id: str,
+        account_id: str,
+        payload: OnboardingDecision,
+    ) -> OnboardingState:
+        step = OnboardingStep.profile_skipped if payload.skip_profile else OnboardingStep.profile_started
+        return self.mark_onboarding_step(organization_id, account_id, step, profile_skipped=payload.skip_profile)
 
     def seed_quainy(self, root: Path) -> str:
         org = self.create_organization(

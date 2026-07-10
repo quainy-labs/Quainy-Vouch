@@ -6,7 +6,7 @@ from typing import Any
 from urllib.parse import urlparse
 from uuid import uuid4
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, computed_field, field_validator, model_validator
 
 
 def now_utc() -> datetime:
@@ -141,6 +141,109 @@ class PreferenceSuggestionKind(str, Enum):
     memory_update = "memory_update"
 
 
+class OnboardingStep(str, Enum):
+    account_created = "account_created"
+    organization_created = "organization_created"
+    profile_started = "profile_started"
+    profile_skipped = "profile_skipped"
+    source_added = "source_added"
+    first_opportunity_generated = "first_opportunity_generated"
+    first_brief_created = "first_brief_created"
+    first_draft_created = "first_draft_created"
+    first_artifact_approved = "first_artifact_approved"
+
+
+class AccountCreate(BaseModel):
+    name: str = Field(min_length=1)
+    email: str = Field(min_length=3)
+    password: str = Field(min_length=8)
+
+    @field_validator("name", "email", "password")
+    @classmethod
+    def clean_account_text(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("Value cannot be blank")
+        return cleaned
+
+    @field_validator("email")
+    @classmethod
+    def clean_account_email(cls, value: str) -> str:
+        cleaned = value.strip().lower()
+        if "@" not in cleaned:
+            raise ValueError("Email must contain @")
+        return cleaned
+
+
+class AccountLogin(BaseModel):
+    email: str = Field(min_length=3)
+    password: str = Field(min_length=1)
+
+    @field_validator("email")
+    @classmethod
+    def clean_login_email(cls, value: str) -> str:
+        return value.strip().lower()
+
+
+class Account(BaseModel):
+    id: str = Field(default_factory=lambda: new_id("acct"))
+    name: str
+    email: str
+    created_at: datetime = Field(default_factory=now_utc)
+    updated_at: datetime = Field(default_factory=now_utc)
+
+
+class OnboardingState(BaseModel):
+    organization_id: str
+    account_id: str
+    completed_steps: list[OnboardingStep] = Field(default_factory=list)
+    profile_skipped: bool = False
+    completed_at: datetime | None = None
+    updated_at: datetime = Field(default_factory=now_utc)
+
+    @computed_field
+    @property
+    def completion_percent(self) -> int:
+        meaningful_steps = {
+            OnboardingStep.account_created,
+            OnboardingStep.organization_created,
+            OnboardingStep.profile_started,
+            OnboardingStep.profile_skipped,
+            OnboardingStep.source_added,
+            OnboardingStep.first_opportunity_generated,
+            OnboardingStep.first_brief_created,
+            OnboardingStep.first_draft_created,
+            OnboardingStep.first_artifact_approved,
+        }
+        profile_done = OnboardingStep.profile_started in self.completed_steps or self.profile_skipped
+        count = len([step for step in self.completed_steps if step in meaningful_steps])
+        if profile_done and OnboardingStep.profile_started not in self.completed_steps:
+            count += 1
+        return min(100, round((count / 8) * 100))
+
+
+class OnboardingDecision(BaseModel):
+    skip_profile: bool = False
+
+
+class AuthenticatedWorkspace(BaseModel):
+    token: str
+    account: Account
+    organization: "Organization"
+    user: "User"
+    profile: "CompanyProfile"
+    onboarding: OnboardingState
+
+
+class CurrentWorkspace(BaseModel):
+    account: Account
+    organization: "Organization"
+    user: "User"
+    profile: "CompanyProfile"
+    sources: list["Source"] = Field(default_factory=list)
+    onboarding: OnboardingState
+
+
 class OrganizationCreate(BaseModel):
     name: str = Field(min_length=1)
     website_url: str | None = None
@@ -181,6 +284,23 @@ class Organization(OrganizationCreate):
     id: str = Field(default_factory=lambda: new_id("org"))
     created_at: datetime = Field(default_factory=now_utc)
     updated_at: datetime = Field(default_factory=now_utc)
+
+
+class SignupCreate(AccountCreate):
+    organization_name: str = Field(min_length=1)
+    website_url: str | None = None
+    industry: str | None = None
+    description: str | None = None
+    audience_summary: str | None = None
+    default_timezone: str = "UTC"
+
+    @field_validator("organization_name", "default_timezone")
+    @classmethod
+    def clean_signup_required_text(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("Value cannot be blank")
+        return cleaned
 
 
 class UserCreate(BaseModel):
