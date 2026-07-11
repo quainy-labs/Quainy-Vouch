@@ -454,12 +454,17 @@ class DataStore:
             raise NotFoundError("Organization not found")
         return self.organizations[organization_id]
 
-    def update_organization(self, organization_id: str, payload: OrganizationUpdate) -> Organization:
+    def update_organization(
+        self,
+        organization_id: str,
+        payload: OrganizationUpdate,
+        actor_id: str = "local_user",
+    ) -> Organization:
         org = self.get_organization(organization_id)
         updates = payload.model_dump(exclude_unset=True)
         updated = org.model_copy(update={**updates, "updated_at": now_utc()})
         self.organizations[organization_id] = updated
-        self.log(organization_id, "organization.updated", "organization", organization_id, {"fields": sorted(updates)})
+        self.log(organization_id, "organization.updated", "organization", organization_id, {"fields": sorted(updates)}, actor_id)
         return updated
 
     def delete_organization(self, organization_id: str, actor_id: str = "local_user") -> DeletionReceipt:
@@ -527,13 +532,18 @@ class DataStore:
         self.audit_logs = [log for log in self.audit_logs if log.organization_id != organization_id]
         return receipt
 
-    def update_profile(self, organization_id: str, payload: CompanyProfileUpdate) -> CompanyProfile:
+    def update_profile(
+        self,
+        organization_id: str,
+        payload: CompanyProfileUpdate,
+        actor_id: str = "local_user",
+    ) -> CompanyProfile:
         self.get_organization(organization_id)
         current = self.profiles[organization_id]
         updates = payload.model_dump(exclude_unset=True)
         profile = current.model_copy(update={**updates, "updated_at": now_utc()})
         self.profiles[organization_id] = profile
-        self.log(organization_id, "profile.updated", "company_profile", organization_id, {"fields": sorted(updates)})
+        self.log(organization_id, "profile.updated", "company_profile", organization_id, {"fields": sorted(updates)}, actor_id)
         return profile
 
     def get_linkedin_integration(self, organization_id: str) -> LinkedInIntegration:
@@ -546,6 +556,7 @@ class DataStore:
         self,
         organization_id: str,
         payload: LinkedInIntegrationUpdate,
+        actor_id: str = "local_user",
     ) -> LinkedInIntegration:
         current = self.get_linkedin_integration(organization_id)
         integration = current.model_copy(update={**payload.model_dump(), "updated_at": now_utc()})
@@ -562,6 +573,7 @@ class DataStore:
                 "publishing_enabled": integration.publishing_enabled,
                 "permissions": integration.permissions,
             },
+            actor_id,
         )
         return integration
 
@@ -695,7 +707,7 @@ class DataStore:
         ranked.sort(key=lambda item: item[2], reverse=True)
         return ranked[:limit]
 
-    def generate_opportunities(self, organization_id: str) -> list[ContentOpportunity]:
+    def generate_opportunities(self, organization_id: str, actor_id: str = "local_user") -> list[ContentOpportunity]:
         profile = self.profiles[organization_id]
         sources = [source for source in self.list_sources(organization_id) if source.approval_status == SourceStatus.approved]
         opportunities = self.opportunity_generator.generate(
@@ -706,7 +718,7 @@ class DataStore:
         )
         for opportunity in opportunities:
             self.opportunities[opportunity.id] = opportunity
-        self.log(organization_id, "opportunities.generated", "organization", organization_id, {"count": len(opportunities)})
+        self.log(organization_id, "opportunities.generated", "organization", organization_id, {"count": len(opportunities)}, actor_id)
         return opportunities
 
     def create_calendar_event(
@@ -748,7 +760,7 @@ class DataStore:
             reverse=True,
         )
 
-    def generate_trend_opportunities(self, organization_id: str) -> list[ContentOpportunity]:
+    def generate_trend_opportunities(self, organization_id: str, actor_id: str = "local_user") -> list[ContentOpportunity]:
         self.get_organization(organization_id)
         sources = [source for source in self.list_sources(organization_id) if source.approval_status == SourceStatus.approved]
         opportunities = self.trend_opportunity_generator.generate(
@@ -760,17 +772,23 @@ class DataStore:
         )
         for opportunity in opportunities:
             self.opportunities[opportunity.id] = opportunity
-        self.log(organization_id, "trend_opportunities.generated", "organization", organization_id, {"count": len(opportunities)})
+        self.log(organization_id, "trend_opportunities.generated", "organization", organization_id, {"count": len(opportunities)}, actor_id)
         return opportunities
 
-    def create_brief(self, opportunity_id: str) -> ContentBrief:
+    def create_brief(self, opportunity_id: str, actor_id: str = "local_user") -> ContentBrief:
         opportunity = self.get_opportunity(opportunity_id)
         brief = build_brief(self.profiles[opportunity.organization_id], opportunity, self.approved_chunks(opportunity.organization_id))
         self.briefs[brief.id] = brief
-        self.log(brief.organization_id, "brief.created", "brief", brief.id)
+        self.log(brief.organization_id, "brief.created", "brief", brief.id, actor_id=actor_id)
         return brief
 
-    def generate_drafts(self, brief_id: str, platform: str = "linkedin", content_type: str = "company_post") -> list[Draft]:
+    def generate_drafts(
+        self,
+        brief_id: str,
+        platform: str = "linkedin",
+        content_type: str = "company_post",
+        actor_id: str = "local_user",
+    ) -> list[Draft]:
         brief = self.get_brief(brief_id)
         opportunity = self.get_opportunity(brief.opportunity_id)
         adapter = self.get_format_adapter(platform, content_type)
@@ -786,22 +804,23 @@ class DataStore:
             draft.generation_metadata["model_provider"] = self.model_provider.provider_name
             draft.generation_metadata["embedding_provider"] = self.embedding_provider.provider_name
             self.drafts[draft.id] = draft
-        self.log(brief.organization_id, "drafts.generated", "brief", brief.id, {"count": len(drafts)})
+        self.log(brief.organization_id, "drafts.generated", "brief", brief.id, {"count": len(drafts)}, actor_id)
         return drafts
 
-    def regenerate_drafts_for_draft(self, draft_id: str) -> list[Draft]:
+    def regenerate_drafts_for_draft(self, draft_id: str, actor_id: str = "local_user") -> list[Draft]:
         draft = self.get_draft(draft_id)
-        drafts = self.generate_drafts(draft.content_brief_id, draft.platform, draft.content_type)
+        drafts = self.generate_drafts(draft.content_brief_id, draft.platform, draft.content_type, actor_id)
         self.log(
             draft.organization_id,
             "draft.regenerated",
             "draft",
             draft.id,
             {"count": len(drafts), "new_draft_ids": [new_draft.id for new_draft in drafts]},
+            actor_id,
         )
         return drafts
 
-    def update_draft_body(self, draft_id: str, body: str) -> Draft:
+    def update_draft_body(self, draft_id: str, body: str, actor_id: str = "local_user") -> Draft:
         draft = self.get_draft(draft_id)
         brief = self.get_brief(draft.content_brief_id)
         opportunity = self.get_opportunity(brief.opportunity_id)
@@ -813,14 +832,14 @@ class DataStore:
         draft.quality_report = adapter.quality_checks(body, self.profiles[draft.organization_id], brief)
         draft.updated_at = now_utc()
         self.drafts[draft.id] = draft
-        self.log(draft.organization_id, "draft.edited", "draft", draft.id)
+        self.log(draft.organization_id, "draft.edited", "draft", draft.id, actor_id=actor_id)
         return draft
 
     def approve_draft(self, draft_id: str, payload: ReviewDecisionCreate, actor_id: str = "local_user") -> ApprovalDecision:
         draft = self.get_draft(draft_id)
         self.require_role(draft.organization_id, actor_id, {UserRole.owner, UserRole.reviewer})
         if payload.edited_body:
-            draft = self.update_draft_body(draft_id, payload.edited_body)
+            draft = self.update_draft_body(draft_id, payload.edited_body, actor_id)
         policy = self.get_approval_policy(draft.organization_id)
         high_risk_claims = high_risk_unsupported_claims(draft.claims)
         if high_risk_claims and not payload.override_reason:
@@ -883,21 +902,26 @@ class DataStore:
         self.log(draft.organization_id, "draft.approved", "draft", draft.id, approval_progress, actor_id)
         return decision
 
-    def reject_draft(self, draft_id: str, payload: ReviewDecisionCreate) -> ApprovalDecision:
+    def reject_draft(
+        self,
+        draft_id: str,
+        payload: ReviewDecisionCreate,
+        actor_id: str = "local_user",
+    ) -> ApprovalDecision:
         if not payload.reason or not payload.reason.strip():
             raise ReviewDecisionRequiredError("Rejecting a draft requires a reason.")
         draft = self.get_draft(draft_id)
         if payload.edited_body:
-            draft = self.update_draft_body(draft_id, payload.edited_body)
+            draft = self.update_draft_body(draft_id, payload.edited_body, actor_id)
         draft.status = DraftStatus.rejected
         draft.updated_at = now_utc()
         self.drafts[draft.id] = draft
         decision = ApprovalDecision(draft_id=draft.id, decision=Decision.reject, **payload.model_dump())
         self.decisions[decision.id] = decision
-        self.log(draft.organization_id, "draft.rejected", "draft", draft.id, {"reason": payload.reason})
+        self.log(draft.organization_id, "draft.rejected", "draft", draft.id, {"reason": payload.reason}, actor_id)
         return decision
 
-    def export_draft(self, draft_id: str) -> ApprovalDecision:
+    def export_draft(self, draft_id: str, actor_id: str = "local_user") -> ApprovalDecision:
         draft = self.get_draft(draft_id)
         memory_id = self._memory_id_for_draft(draft)
         memory = self.memory.get(memory_id)
@@ -924,10 +948,16 @@ class DataStore:
             self.memory[memory_id].exported_at = now_utc()
         decision = ApprovalDecision(draft_id=draft.id, decision=Decision.export)
         self.decisions[decision.id] = decision
-        self.log(draft.organization_id, "draft.exported", "draft", draft.id)
+        self.log(draft.organization_id, "draft.exported", "draft", draft.id, actor_id=actor_id)
         return decision
 
-    def schedule_draft(self, draft_id: str, scheduled_for, reason: str | None = None) -> ApprovalDecision:
+    def schedule_draft(
+        self,
+        draft_id: str,
+        scheduled_for,
+        reason: str | None = None,
+        actor_id: str = "local_user",
+    ) -> ApprovalDecision:
         draft = self.get_draft(draft_id)
         draft.status = DraftStatus.scheduled
         draft.scheduled_for = scheduled_for
@@ -941,10 +971,16 @@ class DataStore:
             "draft",
             draft.id,
             {"scheduled_for": scheduled_for.isoformat(), "reason": reason},
+            actor_id,
         )
         return decision
 
-    def publish_draft_to_linkedin(self, draft_id: str, payload: DraftPublishCreate) -> PublishResult:
+    def publish_draft_to_linkedin(
+        self,
+        draft_id: str,
+        payload: DraftPublishCreate,
+        actor_id: str = "local_user",
+    ) -> PublishResult:
         draft = self.get_draft(draft_id)
         if draft.platform != "linkedin" or draft.content_type != "company_post":
             raise ApprovalBlockedError("Only LinkedIn company post drafts can be published through the LinkedIn adapter.")
@@ -983,6 +1019,7 @@ class DataStore:
                     "provider_post_id": result.provider_post_id,
                     "published_url": result.published_url,
                 },
+                actor_id,
             )
         else:
             self.log(
@@ -996,6 +1033,7 @@ class DataStore:
                     "page_name": result.page_name,
                     "failure_reason": result.failure_reason,
                 },
+                actor_id,
             )
 
         self.drafts[draft.id] = draft
@@ -1121,7 +1159,7 @@ class DataStore:
             )
         return sorted(artifacts, key=lambda artifact: artifact.updated_at, reverse=True)
 
-    def generate_preference_suggestions(self, organization_id: str) -> list[PreferenceSuggestion]:
+    def generate_preference_suggestions(self, organization_id: str, actor_id: str = "local_user") -> list[PreferenceSuggestion]:
         self.get_organization(organization_id)
         draft_ids = {draft.id for draft in self.drafts.values() if draft.organization_id == organization_id}
         decisions = [decision for decision in self.decisions.values() if decision.draft_id in draft_ids]
@@ -1134,7 +1172,7 @@ class DataStore:
                 self.preference_suggestions[existing.id] = existing
             else:
                 self.preference_suggestions[suggestion.id] = suggestion
-        self.log(organization_id, "preferences.suggested", "organization", organization_id, {"count": len(suggestions)})
+        self.log(organization_id, "preferences.suggested", "organization", organization_id, {"count": len(suggestions)}, actor_id)
         return self.list_preference_suggestions(organization_id)
 
     def list_preference_suggestions(self, organization_id: str) -> list[PreferenceSuggestion]:
@@ -1218,7 +1256,12 @@ class DataStore:
                 return suggestion
         return None
 
-    def record_performance_metrics(self, memory_id: str, payload: PerformanceMetricsCreate) -> PostMemory:
+    def record_performance_metrics(
+        self,
+        memory_id: str,
+        payload: PerformanceMetricsCreate,
+        actor_id: str = "local_user",
+    ) -> PostMemory:
         if memory_id not in self.memory:
             raise NotFoundError("Post memory not found")
         memory = self.memory[memory_id]
@@ -1230,10 +1273,11 @@ class DataStore:
             "post_memory",
             memory.id,
             {"source": memory.performance_snapshot.get("source"), "metrics": memory.performance_snapshot.get("metrics", {})},
+            actor_id,
         )
         return memory
 
-    def import_linkedin_analytics(self, organization_id: str) -> list[PostMemory]:
+    def import_linkedin_analytics(self, organization_id: str, actor_id: str = "local_user") -> list[PostMemory]:
         self.get_organization(organization_id)
         imported: list[PostMemory] = []
         for memory in self.list_memory(organization_id):
@@ -1248,6 +1292,7 @@ class DataStore:
             "organization",
             organization_id,
             {"provider": self.analytics_importer.provider_name, "count": len(imported)},
+            actor_id,
         )
         return imported
 

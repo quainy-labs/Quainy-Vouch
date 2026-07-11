@@ -984,12 +984,22 @@ function App() {
     return `${approvedCount} approved sources`;
   }, [bootstrap]);
 
+  const currentRole = currentUser?.role ?? "viewer";
+  const canManageWorkspace = currentRole === "owner";
+  const canEditKnowledge = currentRole === "owner" || currentRole === "editor";
+  const canEditContent = canEditKnowledge;
+  const canReviewContent = currentRole === "owner" || currentRole === "reviewer";
+  const workspacePermissionMessage = "Only workspace owners can change organization settings, team roles, approval policy, and publishing settings.";
+  const knowledgePermissionMessage = "Only owners and editors can change sources, calendar context, trends, briefs, and drafts.";
+  const reviewPermissionMessage = "Only owners and reviewers can approve or reject drafts.";
+
   const approvalBlocked = reviewPackage?.suggested_action.toLowerCase().includes("unsupported claims") ?? false;
   const approvalProgress = selectedDraft?.approval_metadata ?? {};
-  const canApproveDraft = !busy && !approvalBlocked;
-  const canExportDraft = Boolean(selectedDraft && ["approved", "scheduled", "exported", "published"].includes(selectedDraft.status));
-  const canScheduleDraft = Boolean(selectedDraft && ["approved", "scheduled", "exported"].includes(selectedDraft.status));
+  const canApproveDraft = !busy && !approvalBlocked && canReviewContent;
+  const canExportDraft = Boolean(canEditContent && selectedDraft && ["approved", "scheduled", "exported", "published"].includes(selectedDraft.status));
+  const canScheduleDraft = Boolean(canEditContent && selectedDraft && ["approved", "scheduled", "exported"].includes(selectedDraft.status));
   const canAttemptLinkedinPublish =
+    canEditContent &&
     selectedDraft?.platform === "linkedin" &&
     selectedDraft.content_type === "company_post" &&
     ["approved", "scheduled", "exported"].includes(selectedDraft.status);
@@ -1008,6 +1018,12 @@ function App() {
     { id: "claims", label: "Claims" },
     { id: "linkedin", label: "LinkedIn" },
   ];
+
+  function requirePermission(allowed: boolean, message: string): boolean {
+    if (allowed) return true;
+    setNotice(message);
+    return false;
+  }
   const viewItems: ViewItem[] = [
     {
       id: "studio",
@@ -1369,6 +1385,7 @@ function App() {
 
   async function generateOpportunities() {
     if (!bootstrap) return;
+    if (!requirePermission(canEditContent, knowledgePermissionMessage)) return;
     setBusy(true);
     try {
       const result = await api<{ opportunities: Opportunity[]; message?: string }>(
@@ -1603,6 +1620,7 @@ function App() {
 
   async function saveSetup() {
     if (!bootstrap || !setupForm) return;
+    if (!requirePermission(canManageWorkspace, workspacePermissionMessage)) return;
     const errors = validateSetupForm(setupForm);
     setSetupErrors(errors);
     if (errors.length > 0) return;
@@ -1688,6 +1706,7 @@ function App() {
 
   async function addSource() {
     if (!bootstrap) return;
+    if (!requirePermission(canEditKnowledge, knowledgePermissionMessage)) return;
     const errors = validateSourceForm(sourceForm);
     setSourceErrors(errors);
     if (errors.length > 0) return;
@@ -1729,6 +1748,7 @@ function App() {
   }
 
   async function updateSourceStatus(sourceId: string, approvalStatus: string) {
+    if (!requirePermission(canEditKnowledge, knowledgePermissionMessage)) return;
     setBusy(true);
     try {
       await api<Source>(`/sources/${sourceId}`, {
@@ -1751,6 +1771,7 @@ function App() {
   }
 
   async function refreshSource(sourceId: string) {
+    if (!requirePermission(canEditKnowledge, knowledgePermissionMessage)) return;
     setBusy(true);
     try {
       await api(`/sources/${sourceId}/refresh`, { method: "POST" });
@@ -1787,6 +1808,7 @@ function App() {
   }
 
   async function createBrief(opportunity: Opportunity) {
+    if (!requirePermission(canEditContent, knowledgePermissionMessage)) return;
     if (!canBuildBrief(opportunity)) {
       setSelectedOpportunity(opportunity);
       setSelectedBrief(null);
@@ -1813,6 +1835,7 @@ function App() {
 
   async function addCalendarEvent() {
     if (!bootstrap || !calendarEventForm.title.trim() || !calendarEventForm.starts_at) return;
+    if (!requirePermission(canEditKnowledge, knowledgePermissionMessage)) return;
     setBusy(true);
     try {
       await api<CalendarEvent>(`/organizations/${bootstrap.organization.id}/calendar-events`, {
@@ -1836,6 +1859,7 @@ function App() {
 
   async function addTrendSignal() {
     if (!bootstrap || !trendSignalForm.title.trim() || trendSignalForm.summary.trim().length < 10) return;
+    if (!requirePermission(canEditKnowledge, knowledgePermissionMessage)) return;
     setBusy(true);
     try {
       await api<TrendSignal>(`/organizations/${bootstrap.organization.id}/trend-signals`, {
@@ -1859,6 +1883,7 @@ function App() {
 
   async function generateTrendOpportunities() {
     if (!bootstrap) return;
+    if (!requirePermission(canEditContent, knowledgePermissionMessage)) return;
     setBusy(true);
     try {
       const result = await api<{ opportunities: Opportunity[] }>(`/organizations/${bootstrap.organization.id}/trend-opportunities/generate`, {
@@ -1884,6 +1909,7 @@ function App() {
 
   async function generateDraftsFromBrief() {
     if (!selectedBrief) return;
+    if (!requirePermission(canEditContent, knowledgePermissionMessage)) return;
     setBusy(true);
     try {
       const params = formatChoiceParams(formatChoice);
@@ -1901,6 +1927,7 @@ function App() {
 
   async function regenerateSelectedDraft() {
     if (!selectedDraft) return;
+    if (!requirePermission(canEditContent, knowledgePermissionMessage)) return;
     setBusy(true);
     try {
       const result = await api<{ drafts: Draft[] }>(`/drafts/${selectedDraft.id}/regenerate`, { method: "POST" });
@@ -1915,6 +1942,7 @@ function App() {
 
   async function approveDraft() {
     if (!selectedDraft) return;
+    if (!requirePermission(canReviewContent, reviewPermissionMessage)) return;
     setBusy(true);
     try {
       await api(`/drafts/${selectedDraft.id}/approve`, {
@@ -1943,6 +1971,7 @@ function App() {
 
   async function rejectDraft() {
     if (!selectedDraft) return;
+    if (!requirePermission(canReviewContent, reviewPermissionMessage)) return;
     setBusy(true);
     try {
       await api(`/drafts/${selectedDraft.id}/reject`, {
@@ -1963,6 +1992,7 @@ function App() {
 
   async function saveDraftEdit() {
     if (!selectedDraft) return;
+    if (!requirePermission(canEditContent, knowledgePermissionMessage)) return;
     setBusy(true);
     try {
       const updated = await api<Draft>(`/drafts/${selectedDraft.id}`, {
@@ -1980,6 +2010,7 @@ function App() {
 
   async function exportDraft() {
     if (!selectedDraft) return;
+    if (!requirePermission(canEditContent, knowledgePermissionMessage)) return;
     setBusy(true);
     try {
       await api(`/drafts/${selectedDraft.id}/export`, { method: "POST" });
@@ -2004,6 +2035,7 @@ function App() {
 
   async function scheduleDraft() {
     if (!selectedDraft || !scheduleFor) return;
+    if (!requirePermission(canEditContent, knowledgePermissionMessage)) return;
     setBusy(true);
     try {
       await api(`/drafts/${selectedDraft.id}/schedule`, {
@@ -2026,6 +2058,7 @@ function App() {
 
   async function publishDraftToLinkedin() {
     if (!selectedDraft || !linkedinIntegration) return;
+    if (!requirePermission(canEditContent, knowledgePermissionMessage)) return;
     setBusy(true);
     try {
       const result = await api<PublishResult>(`/drafts/${selectedDraft.id}/publish/linkedin`, {
@@ -2074,6 +2107,7 @@ function App() {
 
   async function importAnalytics() {
     if (!bootstrap) return;
+    if (!requirePermission(canEditContent, knowledgePermissionMessage)) return;
     setBusy(true);
     try {
       await api<PostMemory[]>(`/organizations/${bootstrap.organization.id}/analytics/import`, { method: "POST" });
@@ -2087,6 +2121,7 @@ function App() {
 
   async function saveManualMetrics() {
     if (!metricsForm.memory_id) return;
+    if (!requirePermission(canEditContent, knowledgePermissionMessage)) return;
     setBusy(true);
     try {
       await api<PostMemory>(`/memory/${metricsForm.memory_id}/performance`, {
@@ -2116,6 +2151,7 @@ function App() {
 
   async function addUser() {
     if (!bootstrap || !userForm.name.trim()) return;
+    if (!requirePermission(canManageWorkspace, workspacePermissionMessage)) return;
     setBusy(true);
     try {
       await api<WorkspaceUser>(`/organizations/${bootstrap.organization.id}/users`, {
@@ -2136,6 +2172,7 @@ function App() {
 
   async function updateUserRole(userId: string, role: WorkspaceUser["role"]) {
     if (!bootstrap) return;
+    if (!requirePermission(canManageWorkspace, workspacePermissionMessage)) return;
     setBusy(true);
     try {
       await api<WorkspaceUser>(`/organizations/${bootstrap.organization.id}/users/${userId}`, {
@@ -2151,6 +2188,7 @@ function App() {
 
   async function saveApprovalPolicy() {
     if (!bootstrap || !approvalPolicyDraft) return;
+    if (!requirePermission(canManageWorkspace, workspacePermissionMessage)) return;
     setBusy(true);
     try {
       const policy = await api<ApprovalPolicy>(`/organizations/${bootstrap.organization.id}/approval-policy`, {
@@ -2174,6 +2212,7 @@ function App() {
 
   async function generatePreferenceSuggestions() {
     if (!bootstrap) return;
+    if (!requirePermission(canEditContent, knowledgePermissionMessage)) return;
     setBusy(true);
     try {
       const suggestions = await api<PreferenceSuggestion[]>(
@@ -2189,6 +2228,7 @@ function App() {
 
   async function decidePreferenceSuggestion(suggestionId: string, action: "approve" | "dismiss") {
     if (!bootstrap) return;
+    if (!requirePermission(canEditContent, knowledgePermissionMessage)) return;
     setBusy(true);
     try {
       await api<PreferenceSuggestion>(`/preference-suggestions/${suggestionId}/${action}`, {
@@ -2422,7 +2462,12 @@ function App() {
                   <h2>Organization and voice profile</h2>
                 </div>
                 <div className="setup-actions">
-                  <button className="icon-button primary" onClick={saveSetup} disabled={busy} title="Save setup">
+                  <button
+                    className="icon-button primary"
+                    onClick={saveSetup}
+                    disabled={busy || !canManageWorkspace}
+                    title={canManageWorkspace ? "Save setup" : workspacePermissionMessage}
+                  >
                     <Save size={18} />
                     <span>Save setup</span>
                   </button>
@@ -2598,7 +2643,12 @@ function App() {
                 <p className="eyebrow">Team</p>
                 <h2>Users and roles</h2>
               </div>
-              <button className="icon-button primary" onClick={addUser} disabled={busy || !userForm.name.trim()} title="Add user">
+              <button
+                className="icon-button primary"
+                onClick={addUser}
+                disabled={busy || !canManageWorkspace || !userForm.name.trim()}
+                title={canManageWorkspace ? "Add user" : workspacePermissionMessage}
+              >
                 <Plus size={18} />
                 <span>Add user</span>
               </button>
@@ -2634,7 +2684,7 @@ function App() {
                   <select
                     value={user.role}
                     onChange={(event) => updateUserRole(user.id, event.target.value as WorkspaceUser["role"])}
-                    disabled={busy || user.id === "local_user"}
+                    disabled={busy || !canManageWorkspace || user.id === "local_user"}
                   >
                     <option value="viewer">Viewer</option>
                     <option value="editor">Editor</option>
@@ -2692,7 +2742,12 @@ function App() {
                     <span>Allow logged risk override</span>
                   </label>
                 </div>
-                <button className="icon-button" onClick={saveApprovalPolicy} disabled={busy} title="Save approval policy">
+                <button
+                  className="icon-button"
+                  onClick={saveApprovalPolicy}
+                  disabled={busy || !canManageWorkspace}
+                  title={canManageWorkspace ? "Save approval policy" : workspacePermissionMessage}
+                >
                   <Save size={18} />
                   <span>Save policy</span>
                 </button>
@@ -2706,7 +2761,12 @@ function App() {
                 <p className="eyebrow">Source Library</p>
                 <h2>Approved company knowledge</h2>
               </div>
-              <button className="icon-button primary" onClick={addSource} disabled={busy} title="Add source">
+              <button
+                className="icon-button primary"
+                onClick={addSource}
+                disabled={busy || !canEditKnowledge}
+                title={canEditKnowledge ? "Add source" : knowledgePermissionMessage}
+              >
                 <Plus size={18} />
                 <span>Add source</span>
               </button>
@@ -2834,12 +2894,16 @@ function App() {
                           className={sourceDetail.source.approval_status === status ? "active" : ""}
                           key={status}
                           onClick={() => updateSourceStatus(sourceDetail.source.id, status)}
-                          disabled={busy}
+                          disabled={busy || !canEditKnowledge}
                         >
                           {status}
                         </button>
                       ))}
-                      <button onClick={() => refreshSource(sourceDetail.source.id)} disabled={busy} title="Refresh source">
+                      <button
+                        onClick={() => refreshSource(sourceDetail.source.id)}
+                        disabled={busy || !canEditKnowledge}
+                        title={canEditKnowledge ? "Refresh source" : knowledgePermissionMessage}
+                      >
                         <RefreshCcw size={15} />
                         refresh
                       </button>
@@ -2916,7 +2980,12 @@ function App() {
                 <p className="eyebrow">Calendar And Trends</p>
                 <h2>Context-aware market moments</h2>
               </div>
-              <button className="icon-button primary" onClick={generateTrendOpportunities} disabled={busy || trendSignals.length === 0} title="Generate trend opportunities">
+              <button
+                className="icon-button primary"
+                onClick={generateTrendOpportunities}
+                disabled={busy || !canEditContent || trendSignals.length === 0}
+                title={canEditContent ? "Generate trend opportunities" : knowledgePermissionMessage}
+              >
                 <Sparkles size={18} />
                 <span>Generate trends</span>
               </button>
@@ -2982,7 +3051,7 @@ function App() {
                   <button
                     className="icon-button"
                     onClick={addCalendarEvent}
-                    disabled={busy || !calendarEventForm.title.trim() || !calendarEventForm.starts_at}
+                    disabled={busy || !canEditKnowledge || !calendarEventForm.title.trim() || !calendarEventForm.starts_at}
                     title="Add calendar event"
                   >
                     <Plus size={18} />
@@ -3057,7 +3126,7 @@ function App() {
                   <button
                     className="icon-button"
                     onClick={addTrendSignal}
-                    disabled={busy || !trendSignalForm.title.trim() || trendSignalForm.summary.trim().length < 10}
+                    disabled={busy || !canEditKnowledge || !trendSignalForm.title.trim() || trendSignalForm.summary.trim().length < 10}
                     title="Add trend signal"
                   >
                     <Plus size={18} />
@@ -3086,7 +3155,12 @@ function App() {
                 <p className="eyebrow">Opportunities</p>
                 <h2>Source-backed angles</h2>
               </div>
-              <button className="icon-button primary" onClick={generateOpportunities} disabled={busy} title="Generate opportunities">
+              <button
+                className="icon-button primary"
+                onClick={generateOpportunities}
+                disabled={busy || !canEditContent}
+                title={canEditContent ? "Generate opportunities" : knowledgePermissionMessage}
+              >
                 <RefreshCcw size={18} />
                 <span>Generate</span>
               </button>
@@ -3119,7 +3193,7 @@ function App() {
                     className={`opportunity-card ${selectedOpportunity?.id === opportunity.id ? "selected" : ""} ${opportunity.status === "warned" ? "warned" : ""}`}
                     key={opportunity.id}
                     onClick={() => createBrief(opportunity)}
-                    disabled={busy}
+                    disabled={busy || !canEditContent}
                   >
                     <div className="opportunity-scores">
                       <span>#{index + 1}</span>
@@ -3183,7 +3257,12 @@ function App() {
                     <option value="instagram_caption">Instagram caption</option>
                     <option value="instagram_carousel_outline">Instagram carousel</option>
                   </select>
-                  <button className="icon-button primary" onClick={generateDraftsFromBrief} disabled={busy} title="Generate drafts">
+                  <button
+                    className="icon-button primary"
+                    onClick={generateDraftsFromBrief}
+                    disabled={busy || !canEditContent}
+                    title={canEditContent ? "Generate drafts" : knowledgePermissionMessage}
+                  >
                     <FileCheck2 size={18} />
                     <span>Generate drafts</span>
                   </button>
@@ -3384,7 +3463,12 @@ function App() {
                         <p>Approve only when claims and risk checks are acceptable. Rejections require a note.</p>
                       </div>
                       <div className="action-row">
-                        <button className="icon-button" onClick={saveDraftEdit} disabled={busy || editedBody === selectedDraft.body} title="Save edit">
+                        <button
+                          className="icon-button"
+                          onClick={saveDraftEdit}
+                          disabled={busy || !canEditContent || editedBody === selectedDraft.body}
+                          title={canEditContent ? "Save edit" : knowledgePermissionMessage}
+                        >
                           <Save size={18} />
                           <span>Save edit</span>
                         </button>
@@ -3392,12 +3476,17 @@ function App() {
                           className="icon-button primary"
                           onClick={approveDraft}
                           disabled={!canApproveDraft}
-                          title={approvalBlocked ? "Resolve unsupported claims before approval" : "Approve draft"}
+                          title={!canReviewContent ? reviewPermissionMessage : approvalBlocked ? "Resolve unsupported claims before approval" : "Approve draft"}
                         >
                           <Check size={18} />
                           <span>Approve</span>
                         </button>
-                        <button className="icon-button" onClick={rejectDraft} disabled={busy || !reviewReason.trim()} title="Reject draft">
+                        <button
+                          className="icon-button"
+                          onClick={rejectDraft}
+                          disabled={busy || !canReviewContent || !reviewReason.trim()}
+                          title={canReviewContent ? "Reject draft" : reviewPermissionMessage}
+                        >
                           <X size={18} />
                           <span>Reject</span>
                         </button>
@@ -3426,8 +3515,8 @@ function App() {
                         <button
                           className="icon-button"
                           onClick={regenerateSelectedDraft}
-                          disabled={busy || !selectedDraft}
-                          title="Regenerate drafts"
+                          disabled={busy || !canEditContent || !selectedDraft}
+                          title={canEditContent ? "Regenerate drafts" : knowledgePermissionMessage}
                         >
                           <RefreshCcw size={18} />
                           <span>Regenerate</span>
@@ -3711,7 +3800,12 @@ function App() {
                 <p className="eyebrow">Analytics</p>
                 <h2>Performance learning</h2>
               </div>
-              <button className="icon-button" onClick={importAnalytics} disabled={busy} title="Import analytics">
+              <button
+                className="icon-button"
+                onClick={importAnalytics}
+                disabled={busy || !canEditContent}
+                title={canEditContent ? "Import analytics" : knowledgePermissionMessage}
+              >
                 <RefreshCcw size={18} />
                 <span>Import</span>
               </button>
@@ -3752,7 +3846,12 @@ function App() {
                   inputMode="numeric"
                 />
               ))}
-              <button className="icon-button primary" onClick={saveManualMetrics} disabled={busy || !metricsForm.memory_id} title="Save metrics">
+              <button
+                className="icon-button primary"
+                onClick={saveManualMetrics}
+                disabled={busy || !canEditContent || !metricsForm.memory_id}
+                title={canEditContent ? "Save metrics" : knowledgePermissionMessage}
+              >
                 <Save size={18} />
                 <span>Save metrics</span>
               </button>
@@ -3777,7 +3876,12 @@ function App() {
                 <p className="eyebrow">Learning</p>
                 <h2>Preference suggestions</h2>
               </div>
-              <button className="icon-button" onClick={generatePreferenceSuggestions} disabled={busy} title="Generate suggestions">
+              <button
+                className="icon-button"
+                onClick={generatePreferenceSuggestions}
+                disabled={busy || !canEditContent}
+                title={canEditContent ? "Generate suggestions" : knowledgePermissionMessage}
+              >
                 <RefreshCcw size={18} />
                 <span>Suggest</span>
               </button>
@@ -3796,7 +3900,7 @@ function App() {
                       <button
                         className="icon-button primary"
                         onClick={() => decidePreferenceSuggestion(suggestion.id, "approve")}
-                        disabled={busy || suggestion.status !== "pending"}
+                        disabled={busy || !canEditContent || suggestion.status !== "pending"}
                         title="Approve suggestion"
                       >
                         <Check size={18} />
@@ -3805,7 +3909,7 @@ function App() {
                       <button
                         className="icon-button"
                         onClick={() => decidePreferenceSuggestion(suggestion.id, "dismiss")}
-                        disabled={busy || suggestion.status !== "pending"}
+                        disabled={busy || !canEditContent || suggestion.status !== "pending"}
                         title="Dismiss suggestion"
                       >
                         <X size={18} />

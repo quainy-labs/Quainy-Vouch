@@ -211,8 +211,13 @@ class PostgresDataStore(DataStore):
         self._persist_audit_logs_for_org(org.id)
         return org
 
-    def update_organization(self, organization_id: str, payload: OrganizationUpdate) -> Organization:
-        org = super().update_organization(organization_id, payload)
+    def update_organization(
+        self,
+        organization_id: str,
+        payload: OrganizationUpdate,
+        actor_id: str = "local_user",
+    ) -> Organization:
+        org = super().update_organization(organization_id, payload, actor_id)
         self._persist_organization(org)
         return org
 
@@ -234,8 +239,8 @@ class PostgresDataStore(DataStore):
         self._persist_user(user, account_id)
         return user
 
-    def update_profile(self, organization_id: str, payload) -> CompanyProfile:
-        profile = super().update_profile(organization_id, payload)
+    def update_profile(self, organization_id: str, payload, actor_id: str = "local_user") -> CompanyProfile:
+        profile = super().update_profile(organization_id, payload, actor_id)
         self._persist_profile(profile)
         return profile
 
@@ -274,13 +279,14 @@ class PostgresDataStore(DataStore):
         self,
         organization_id: str,
         payload: LinkedInIntegrationUpdate,
+        actor_id: str = "local_user",
     ) -> LinkedInIntegration:
-        integration = super().update_linkedin_integration(organization_id, payload)
+        integration = super().update_linkedin_integration(organization_id, payload, actor_id)
         self._persist_linkedin_integration(integration)
         return integration
 
-    def generate_opportunities(self, organization_id: str) -> list[ContentOpportunity]:
-        opportunities = super().generate_opportunities(organization_id)
+    def generate_opportunities(self, organization_id: str, actor_id: str = "local_user") -> list[ContentOpportunity]:
+        opportunities = super().generate_opportunities(organization_id, actor_id)
         for opportunity in opportunities:
             self._persist_opportunity(opportunity)
         return opportunities
@@ -305,31 +311,37 @@ class PostgresDataStore(DataStore):
         self._persist_trend_signal(trend, actor_id)
         return trend
 
-    def generate_trend_opportunities(self, organization_id: str) -> list[ContentOpportunity]:
-        opportunities = super().generate_trend_opportunities(organization_id)
+    def generate_trend_opportunities(self, organization_id: str, actor_id: str = "local_user") -> list[ContentOpportunity]:
+        opportunities = super().generate_trend_opportunities(organization_id, actor_id)
         for opportunity in opportunities:
             self._persist_opportunity(opportunity)
         return opportunities
 
-    def create_brief(self, opportunity_id: str) -> ContentBrief:
-        brief = super().create_brief(opportunity_id)
+    def create_brief(self, opportunity_id: str, actor_id: str = "local_user") -> ContentBrief:
+        brief = super().create_brief(opportunity_id, actor_id)
         self._persist_brief(brief)
         return brief
 
-    def generate_drafts(self, brief_id: str, platform: str = "linkedin", content_type: str = "company_post") -> list[Draft]:
-        drafts = super().generate_drafts(brief_id, platform, content_type)
+    def generate_drafts(
+        self,
+        brief_id: str,
+        platform: str = "linkedin",
+        content_type: str = "company_post",
+        actor_id: str = "local_user",
+    ) -> list[Draft]:
+        drafts = super().generate_drafts(brief_id, platform, content_type, actor_id)
         for draft in drafts:
             self._persist_draft(draft)
         return drafts
 
-    def regenerate_drafts_for_draft(self, draft_id: str) -> list[Draft]:
-        drafts = super().regenerate_drafts_for_draft(draft_id)
+    def regenerate_drafts_for_draft(self, draft_id: str, actor_id: str = "local_user") -> list[Draft]:
+        drafts = super().regenerate_drafts_for_draft(draft_id, actor_id)
         for draft in drafts:
             self._persist_draft(draft)
         return drafts
 
-    def update_draft_body(self, draft_id: str, body: str) -> Draft:
-        draft = super().update_draft_body(draft_id, body)
+    def update_draft_body(self, draft_id: str, body: str, actor_id: str = "local_user") -> Draft:
+        draft = super().update_draft_body(draft_id, body, actor_id)
         self._persist_draft(draft)
         return draft
 
@@ -348,14 +360,19 @@ class PostgresDataStore(DataStore):
             self._persist_memory(self.memory[memory_id])
         return decision
 
-    def reject_draft(self, draft_id: str, payload: ReviewDecisionCreate) -> ApprovalDecision:
-        decision = super().reject_draft(draft_id, payload)
+    def reject_draft(
+        self,
+        draft_id: str,
+        payload: ReviewDecisionCreate,
+        actor_id: str = "local_user",
+    ) -> ApprovalDecision:
+        decision = super().reject_draft(draft_id, payload, actor_id)
         self._persist_draft(self.get_draft(draft_id))
         self._persist_decision(decision)
         return decision
 
-    def export_draft(self, draft_id: str) -> ApprovalDecision:
-        decision = super().export_draft(draft_id)
+    def export_draft(self, draft_id: str, actor_id: str = "local_user") -> ApprovalDecision:
+        decision = super().export_draft(draft_id, actor_id)
         draft = self.get_draft(draft_id)
         self._persist_draft(draft)
         self._persist_decision(decision)
@@ -364,14 +381,25 @@ class PostgresDataStore(DataStore):
             self._persist_memory(self.memory[memory_id])
         return decision
 
-    def schedule_draft(self, draft_id: str, scheduled_for, reason: str | None = None) -> ApprovalDecision:
-        decision = super().schedule_draft(draft_id, scheduled_for, reason)
+    def schedule_draft(
+        self,
+        draft_id: str,
+        scheduled_for,
+        reason: str | None = None,
+        actor_id: str = "local_user",
+    ) -> ApprovalDecision:
+        decision = super().schedule_draft(draft_id, scheduled_for, reason, actor_id)
         self._persist_draft(self.get_draft(draft_id))
         self._persist_decision(decision)
         return decision
 
-    def publish_draft_to_linkedin(self, draft_id: str, payload: DraftPublishCreate) -> PublishResult:
-        result = super().publish_draft_to_linkedin(draft_id, payload)
+    def publish_draft_to_linkedin(
+        self,
+        draft_id: str,
+        payload: DraftPublishCreate,
+        actor_id: str = "local_user",
+    ) -> PublishResult:
+        result = super().publish_draft_to_linkedin(draft_id, payload, actor_id)
         draft = self.get_draft(draft_id)
         self._persist_draft(draft)
         self._persist_publish_result(result)
@@ -382,8 +410,12 @@ class PostgresDataStore(DataStore):
             self._persist_decision(decision)
         return result
 
-    def generate_preference_suggestions(self, organization_id: str) -> list[PreferenceSuggestion]:
-        suggestions = super().generate_preference_suggestions(organization_id)
+    def generate_preference_suggestions(
+        self,
+        organization_id: str,
+        actor_id: str = "local_user",
+    ) -> list[PreferenceSuggestion]:
+        suggestions = super().generate_preference_suggestions(organization_id, actor_id)
         for suggestion in suggestions:
             self._persist_preference_suggestion(suggestion)
         return suggestions
@@ -409,13 +441,18 @@ class PostgresDataStore(DataStore):
         self._persist_preference_suggestion(suggestion)
         return suggestion
 
-    def record_performance_metrics(self, memory_id: str, payload: PerformanceMetricsCreate) -> PostMemory:
-        memory = super().record_performance_metrics(memory_id, payload)
+    def record_performance_metrics(
+        self,
+        memory_id: str,
+        payload: PerformanceMetricsCreate,
+        actor_id: str = "local_user",
+    ) -> PostMemory:
+        memory = super().record_performance_metrics(memory_id, payload, actor_id)
         self._persist_memory(memory)
         return memory
 
-    def import_linkedin_analytics(self, organization_id: str) -> list[PostMemory]:
-        imported = super().import_linkedin_analytics(organization_id)
+    def import_linkedin_analytics(self, organization_id: str, actor_id: str = "local_user") -> list[PostMemory]:
+        imported = super().import_linkedin_analytics(organization_id, actor_id)
         for memory in imported:
             self._persist_memory(memory)
         return imported

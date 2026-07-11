@@ -291,3 +291,154 @@ def test_authenticated_tokens_are_enforced_on_later_workflow_mutations():
     assert invalid_token.status_code == 401
     assert cross_org.status_code == 404
     assert calendar_invalid_token.status_code == 401
+
+
+def test_authenticated_tokens_cannot_read_other_org_artifacts_or_dashboards():
+    first = client.post(
+        "/auth/signup",
+        json={
+            "name": "Readable Owner",
+            "email": "readable-owner@example.com",
+            "password": "readable-owner-pass",
+            "organization_name": "Readable Org",
+        },
+    ).json()
+    second = client.post(
+        "/auth/signup",
+        json={
+            "name": "Boundary Owner",
+            "email": "boundary-owner@example.com",
+            "password": "boundary-owner-pass",
+            "organization_name": "Boundary Org",
+        },
+    ).json()
+    org_id = first["workspace"]["organization"]["id"]
+    headers = auth_header(first["token"])
+    other_headers = auth_header(second["token"])
+
+    client.patch(
+        f"/organizations/{org_id}/profile",
+        json={
+            "one_liner": "Turns tenant boundary checks into safer public content workflows.",
+            "content_pillars": ["tenant boundary checks"],
+        },
+        headers=headers,
+    ).raise_for_status()
+    source = client.post(
+        f"/organizations/{org_id}/sources",
+        json={
+            "source_type": "manual_note",
+            "title": "Tenant boundary source",
+            "raw_text": (
+                "Tenant boundary source material supports safer content workflows, cross-organization isolation, "
+                "source-backed drafts, reviewer checks, and public communication. "
+            )
+            * 4,
+            "approval_status": "approved",
+        },
+        headers=headers,
+    ).json()
+    opportunity = client.post(f"/organizations/{org_id}/opportunities/generate", headers=headers).json()["opportunities"][0]
+    brief = client.post(f"/opportunities/{opportunity['id']}/briefs", headers=headers).json()
+    draft = client.post(f"/briefs/{brief['id']}/drafts", headers=headers).json()["drafts"][0]
+
+    cross_org_reads = [
+        client.get(f"/organizations/{org_id}", headers=other_headers),
+        client.get(f"/organizations/{org_id}/profile", headers=other_headers),
+        client.get(f"/organizations/{org_id}/sources", headers=other_headers),
+        client.get(f"/sources/{source['id']}", headers=other_headers),
+        client.get(f"/organizations/{org_id}/opportunities", headers=other_headers),
+        client.get(f"/briefs/{brief['id']}", headers=other_headers),
+        client.get(f"/drafts/{draft['id']}", headers=other_headers),
+        client.get(f"/drafts/{draft['id']}/reviewer-package", headers=other_headers),
+        client.get(f"/organizations/{org_id}/content-artifacts", headers=other_headers),
+        client.get(f"/organizations/{org_id}/audit-logs", headers=other_headers),
+    ]
+
+    assert all(response.status_code == 404 for response in cross_org_reads)
+
+
+def test_authenticated_role_changes_limit_later_actions_for_same_token():
+    signup = client.post(
+        "/auth/signup",
+        json={
+            "name": "Role Bound Owner",
+            "email": "role-bound-owner@example.com",
+            "password": "role-bound-pass",
+            "organization_name": "Role Bound Org",
+        },
+    ).json()
+    org_id = signup["workspace"]["organization"]["id"]
+    actor_id = signup["workspace"]["user"]["id"]
+    headers = auth_header(signup["token"])
+
+    demoted = client.patch(
+        f"/organizations/{org_id}/users/{actor_id}",
+        json={"role": "viewer"},
+        headers=headers,
+    )
+    profile_edit = client.patch(
+        f"/organizations/{org_id}/profile",
+        json={"one_liner": "Viewer tokens should not be able to edit the workspace profile."},
+        headers=headers,
+    )
+    source_create = client.post(
+        f"/organizations/{org_id}/sources",
+        json={
+            "source_type": "manual_note",
+            "title": "Viewer source attempt",
+            "raw_text": "A viewer should not be able to add approved organization source context. " * 4,
+            "approval_status": "approved",
+        },
+        headers=headers,
+    )
+    user_create = client.post(
+        f"/organizations/{org_id}/users",
+        json={"name": "Late teammate", "email": "late-teammate@example.com", "role": "editor"},
+        headers=headers,
+    )
+
+    assert demoted.status_code == 200
+    assert profile_edit.status_code == 403
+    assert source_create.status_code == 403
+    assert user_create.status_code == 403
+
+
+def test_authenticated_org_profile_and_integration_updates_audit_real_actor():
+    signup = client.post(
+        "/auth/signup",
+        json={
+            "name": "Audit Owner",
+            "email": "audit-owner@example.com",
+            "password": "audit-owner-pass",
+            "organization_name": "Audit Org",
+        },
+    ).json()
+    org_id = signup["workspace"]["organization"]["id"]
+    actor_id = signup["workspace"]["user"]["id"]
+    headers = auth_header(signup["token"])
+
+    client.patch(f"/organizations/{org_id}", json={"industry": "Auditable communication"}, headers=headers).raise_for_status()
+    client.patch(
+        f"/organizations/{org_id}/profile",
+        json={"one_liner": "Audit Org records real actors for workspace changes."},
+        headers=headers,
+    ).raise_for_status()
+    client.patch(
+        f"/organizations/{org_id}/linkedin-integration",
+        json={
+            "selected_page_urn": "urn:li:organization:4242",
+            "selected_page_name": "Audit Org",
+            "oauth_status": "validated",
+            "permissions": ["w_organization_social"],
+            "publishing_enabled": True,
+        },
+        headers=headers,
+    ).raise_for_status()
+
+    audit = client.get(f"/organizations/{org_id}/audit-logs", headers=headers).json()
+    actor_actions = {item["action"]: item["actor_id"] for item in audit}
+
+    assert actor_actions["organization.updated"] == actor_id
+    assert actor_actions["profile.updated"] == actor_id
+    assert actor_actions["linkedin.integration_updated"] == actor_id

@@ -53,6 +53,7 @@ from app.schemas import (
     TrendSignalCreate,
     User,
     UserCreate,
+    UserRole,
     UserUpdate,
 )
 from app.risk_checks import high_risk_unsupported_claims
@@ -147,6 +148,10 @@ def bearer_token(authorization: str | None) -> str | None:
     return authorization[len(prefix) :].strip()
 
 
+def allow_fixture_fallback() -> bool:
+    return FIXTURE_MODE == "sample"
+
+
 def actor_from_auth(
     organization_id: str,
     authorization: str | None,
@@ -155,14 +160,29 @@ def actor_from_auth(
     token = bearer_token(authorization)
     if token:
         return store.actor_id_for_token(token, organization_id)
-    return fallback_actor_id or "local_user"
+    if allow_fixture_fallback():
+        return fallback_actor_id or "local_user"
+    raise AuthenticationError("Authentication required.")
 
 
 def actor_from_optional_auth(organization_id: str, authorization: str | None) -> str | None:
     token = bearer_token(authorization)
-    if not token:
+    if token:
+        return store.actor_id_for_token(token, organization_id)
+    if allow_fixture_fallback():
         return None
-    return store.actor_id_for_token(token, organization_id)
+    raise AuthenticationError("Authentication required.")
+
+
+def require_org_role(
+    organization_id: str,
+    authorization: str | None,
+    allowed_roles: set[UserRole],
+    fallback_actor_id: str | None = None,
+) -> str:
+    actor_id = actor_from_auth(organization_id, authorization, fallback_actor_id)
+    store.require_role(organization_id, actor_id, allowed_roles)
+    return actor_id
 
 
 @app.get("/health")
@@ -200,6 +220,8 @@ def login(payload: AccountLogin) -> dict[str, object]:
         return {"token": token, "workspace": workspace}
     except AuthenticationError as error:
         raise authentication_failed(error) from error
+    except PermissionDeniedError as error:
+        raise permission_denied(error) from error
     except NotFoundError as error:
         raise not_found(error) from error
 
@@ -238,14 +260,30 @@ def create_organization(payload: OrganizationCreate) -> Organization:
 
 
 @app.get("/organizations", response_model=list[Organization])
-def list_organizations() -> list[Organization]:
-    return store.list_organizations()
+def list_organizations(authorization: str | None = Header(default=None)) -> list[Organization]:
+    try:
+        token = bearer_token(authorization)
+        if token:
+            return [store.current_workspace(token).organization]
+        if allow_fixture_fallback():
+            return store.list_organizations()
+        raise AuthenticationError("Authentication required.")
+    except AuthenticationError as error:
+        raise authentication_failed(error) from error
+    except NotFoundError as error:
+        raise not_found(error) from error
 
 
 @app.get("/organizations/{organization_id}", response_model=Organization)
-def get_organization(organization_id: str) -> Organization:
+def get_organization(
+    organization_id: str,
+    authorization: str | None = Header(default=None),
+) -> Organization:
     try:
+        actor_from_optional_auth(organization_id, authorization)
         return store.get_organization(organization_id)
+    except AuthenticationError as error:
+        raise authentication_failed(error) from error
     except NotFoundError as error:
         raise not_found(error) from error
 
@@ -254,21 +292,30 @@ def get_organization(organization_id: str) -> Organization:
 def update_organization(
     organization_id: str,
     payload: OrganizationUpdate,
+    actor_id: str = "local_user",
     authorization: str | None = Header(default=None),
 ) -> Organization:
     try:
-        actor_from_optional_auth(organization_id, authorization)
-        return store.update_organization(organization_id, payload)
+        actor_id = require_org_role(organization_id, authorization, {UserRole.owner}, actor_id)
+        return store.update_organization(organization_id, payload, actor_id)
     except AuthenticationError as error:
         raise authentication_failed(error) from error
+    except PermissionDeniedError as error:
+        raise permission_denied(error) from error
     except NotFoundError as error:
         raise not_found(error) from error
 
 
 @app.get("/organizations/{organization_id}/users", response_model=list[User])
-def list_users(organization_id: str) -> list[User]:
+def list_users(
+    organization_id: str,
+    authorization: str | None = Header(default=None),
+) -> list[User]:
     try:
+        actor_from_optional_auth(organization_id, authorization)
         return store.list_users(organization_id)
+    except AuthenticationError as error:
+        raise authentication_failed(error) from error
     except NotFoundError as error:
         raise not_found(error) from error
 
@@ -281,7 +328,7 @@ def create_user(
     authorization: str | None = Header(default=None),
 ) -> User:
     try:
-        actor_id = actor_from_auth(organization_id, authorization, actor_id)
+        actor_id = require_org_role(organization_id, authorization, {UserRole.owner}, actor_id)
         return store.create_user(organization_id, payload, actor_id)
     except AuthenticationError as error:
         raise authentication_failed(error) from error
@@ -300,7 +347,7 @@ def update_user(
     authorization: str | None = Header(default=None),
 ) -> User:
     try:
-        actor_id = actor_from_auth(organization_id, authorization, actor_id)
+        actor_id = require_org_role(organization_id, authorization, {UserRole.owner}, actor_id)
         return store.update_user(organization_id, user_id, payload, actor_id)
     except AuthenticationError as error:
         raise authentication_failed(error) from error
@@ -311,9 +358,15 @@ def update_user(
 
 
 @app.get("/organizations/{organization_id}/approval-policy", response_model=ApprovalPolicy)
-def get_approval_policy(organization_id: str) -> ApprovalPolicy:
+def get_approval_policy(
+    organization_id: str,
+    authorization: str | None = Header(default=None),
+) -> ApprovalPolicy:
     try:
+        actor_from_optional_auth(organization_id, authorization)
         return store.get_approval_policy(organization_id)
+    except AuthenticationError as error:
+        raise authentication_failed(error) from error
     except NotFoundError as error:
         raise not_found(error) from error
 
@@ -326,7 +379,7 @@ def update_approval_policy(
     authorization: str | None = Header(default=None),
 ) -> ApprovalPolicy:
     try:
-        actor_id = actor_from_auth(organization_id, authorization, actor_id)
+        actor_id = require_org_role(organization_id, authorization, {UserRole.owner}, actor_id)
         return store.update_approval_policy(organization_id, payload, actor_id)
     except AuthenticationError as error:
         raise authentication_failed(error) from error
@@ -343,7 +396,7 @@ def delete_organization(
     authorization: str | None = Header(default=None),
 ) -> DeletionReceipt:
     try:
-        actor_id = actor_from_auth(organization_id, authorization, actor_id)
+        actor_id = require_org_role(organization_id, authorization, {UserRole.owner}, actor_id)
         return store.delete_organization(organization_id, actor_id)
     except AuthenticationError as error:
         raise authentication_failed(error) from error
@@ -354,10 +407,16 @@ def delete_organization(
 
 
 @app.get("/organizations/{organization_id}/profile", response_model=CompanyProfile)
-def get_profile(organization_id: str) -> CompanyProfile:
+def get_profile(
+    organization_id: str,
+    authorization: str | None = Header(default=None),
+) -> CompanyProfile:
     try:
+        actor_from_optional_auth(organization_id, authorization)
         store.get_organization(organization_id)
         return store.profiles[organization_id]
+    except AuthenticationError as error:
+        raise authentication_failed(error) from error
     except NotFoundError as error:
         raise not_found(error) from error
 
@@ -369,22 +428,29 @@ def update_profile(
     authorization: str | None = Header(default=None),
 ) -> CompanyProfile:
     try:
-        profile = store.update_profile(organization_id, payload)
-        token = bearer_token(authorization)
-        if token:
-            actor = store.actor_id_for_token(token, organization_id)
+        actor = require_org_role(organization_id, authorization, {UserRole.owner, UserRole.editor}, "local_user")
+        profile = store.update_profile(organization_id, payload, actor)
+        if bearer_token(authorization):
             store.mark_onboarding_step(organization_id, actor, OnboardingStep.profile_started, profile_skipped=False)
         return profile
     except AuthenticationError as error:
         raise authentication_failed(error) from error
+    except PermissionDeniedError as error:
+        raise permission_denied(error) from error
     except NotFoundError as error:
         raise not_found(error) from error
 
 
 @app.get("/organizations/{organization_id}/linkedin-integration", response_model=LinkedInIntegration)
-def get_linkedin_integration(organization_id: str) -> LinkedInIntegration:
+def get_linkedin_integration(
+    organization_id: str,
+    authorization: str | None = Header(default=None),
+) -> LinkedInIntegration:
     try:
+        actor_from_optional_auth(organization_id, authorization)
         return store.get_linkedin_integration(organization_id)
+    except AuthenticationError as error:
+        raise authentication_failed(error) from error
     except NotFoundError as error:
         raise not_found(error) from error
 
@@ -393,13 +459,16 @@ def get_linkedin_integration(organization_id: str) -> LinkedInIntegration:
 def update_linkedin_integration(
     organization_id: str,
     payload: LinkedInIntegrationUpdate,
+    actor_id: str = "local_user",
     authorization: str | None = Header(default=None),
 ) -> LinkedInIntegration:
     try:
-        actor_from_optional_auth(organization_id, authorization)
-        return store.update_linkedin_integration(organization_id, payload)
+        actor_id = require_org_role(organization_id, authorization, {UserRole.owner}, actor_id)
+        return store.update_linkedin_integration(organization_id, payload, actor_id)
     except AuthenticationError as error:
         raise authentication_failed(error) from error
+    except PermissionDeniedError as error:
+        raise permission_denied(error) from error
     except NotFoundError as error:
         raise not_found(error) from error
 
@@ -412,7 +481,7 @@ def create_source(
     authorization: str | None = Header(default=None),
 ) -> Source:
     try:
-        actor_id = actor_from_auth(organization_id, authorization, actor_id)
+        actor_id = require_org_role(organization_id, authorization, {UserRole.owner, UserRole.editor}, actor_id)
         source = store.create_source(organization_id, payload, actor_id)
         store.ingest_source(source.id, actor_id)
         if authorization:
@@ -427,17 +496,30 @@ def create_source(
 
 
 @app.get("/organizations/{organization_id}/sources", response_model=list[Source])
-def list_sources(organization_id: str) -> list[Source]:
+def list_sources(
+    organization_id: str,
+    authorization: str | None = Header(default=None),
+) -> list[Source]:
     try:
+        actor_from_optional_auth(organization_id, authorization)
         return store.list_sources(organization_id)
+    except AuthenticationError as error:
+        raise authentication_failed(error) from error
     except NotFoundError as error:
         raise not_found(error) from error
 
 
 @app.get("/sources/{source_id}", response_model=SourceDetail)
-def get_source(source_id: str) -> SourceDetail:
+def get_source(
+    source_id: str,
+    authorization: str | None = Header(default=None),
+) -> SourceDetail:
     try:
+        source = store.get_source(source_id)
+        actor_from_optional_auth(source.organization_id, authorization)
         return store.get_source_detail(source_id)
+    except AuthenticationError as error:
+        raise authentication_failed(error) from error
     except NotFoundError as error:
         raise not_found(error) from error
 
@@ -450,10 +532,8 @@ def update_source(
     authorization: str | None = Header(default=None),
 ) -> Source:
     try:
-        token = bearer_token(authorization)
-        if token:
-            source = store.get_source(source_id)
-            actor_id = store.actor_id_for_token(token, source.organization_id)
+        source = store.get_source(source_id)
+        actor_id = require_org_role(source.organization_id, authorization, {UserRole.owner, UserRole.editor}, actor_id)
         return store.update_source(source_id, payload, actor_id)
     except AuthenticationError as error:
         raise authentication_failed(error) from error
@@ -470,10 +550,8 @@ def ingest_source(
     authorization: str | None = Header(default=None),
 ) -> dict[str, object]:
     try:
-        token = bearer_token(authorization)
-        if token:
-            source = store.get_source(source_id)
-            actor_id = store.actor_id_for_token(token, source.organization_id)
+        source = store.get_source(source_id)
+        actor_id = require_org_role(source.organization_id, authorization, {UserRole.owner, UserRole.editor}, actor_id)
         chunks = store.ingest_source(source_id, actor_id)
         return {"source_id": source_id, "chunk_count": len(chunks), "chunks": chunks}
     except AuthenticationError as error:
@@ -491,10 +569,8 @@ def refresh_source(
     authorization: str | None = Header(default=None),
 ) -> dict[str, object]:
     try:
-        token = bearer_token(authorization)
-        if token:
-            source = store.get_source(source_id)
-            actor_id = store.actor_id_for_token(token, source.organization_id)
+        source = store.get_source(source_id)
+        actor_id = require_org_role(source.organization_id, authorization, {UserRole.owner, UserRole.editor}, actor_id)
         chunks = store.ingest_source(source_id, actor_id)
         return {"chunks": chunks, "message": "Source refreshed from the selected page snapshot."}
     except AuthenticationError as error:
@@ -529,11 +605,8 @@ def generate_opportunities(
     authorization: str | None = Header(default=None),
 ) -> dict[str, object]:
     try:
-        actor_id = None
-        token = bearer_token(authorization)
-        if token:
-            actor_id = store.actor_id_for_token(token, organization_id)
-        opportunities = store.generate_opportunities(organization_id)
+        actor_id = require_org_role(organization_id, authorization, {UserRole.owner, UserRole.editor}, "local_user")
+        opportunities = store.generate_opportunities(organization_id, actor_id)
         if actor_id:
             store.mark_onboarding_step(organization_id, actor_id, OnboardingStep.first_opportunity_generated)
         if not opportunities:
@@ -541,19 +614,36 @@ def generate_opportunities(
         return {"opportunities": opportunities}
     except AuthenticationError as error:
         raise authentication_failed(error) from error
+    except PermissionDeniedError as error:
+        raise permission_denied(error) from error
     except NotFoundError as error:
         raise not_found(error) from error
 
 
 @app.get("/organizations/{organization_id}/opportunities")
-def list_opportunities(organization_id: str) -> list[object]:
-    return store.list_opportunities(organization_id)
+def list_opportunities(
+    organization_id: str,
+    authorization: str | None = Header(default=None),
+) -> list[object]:
+    try:
+        actor_from_optional_auth(organization_id, authorization)
+        return store.list_opportunities(organization_id)
+    except AuthenticationError as error:
+        raise authentication_failed(error) from error
+    except NotFoundError as error:
+        raise not_found(error) from error
 
 
 @app.get("/organizations/{organization_id}/calendar-events", response_model=list[CalendarEvent])
-def list_calendar_events(organization_id: str) -> list[CalendarEvent]:
+def list_calendar_events(
+    organization_id: str,
+    authorization: str | None = Header(default=None),
+) -> list[CalendarEvent]:
     try:
+        actor_from_optional_auth(organization_id, authorization)
         return store.list_calendar_events(organization_id)
+    except AuthenticationError as error:
+        raise authentication_failed(error) from error
     except NotFoundError as error:
         raise not_found(error) from error
 
@@ -566,7 +656,7 @@ def create_calendar_event(
     authorization: str | None = Header(default=None),
 ) -> CalendarEvent:
     try:
-        actor_id = actor_from_auth(organization_id, authorization, actor_id)
+        actor_id = require_org_role(organization_id, authorization, {UserRole.owner, UserRole.editor}, actor_id)
         return store.create_calendar_event(organization_id, payload, actor_id)
     except AuthenticationError as error:
         raise authentication_failed(error) from error
@@ -577,9 +667,15 @@ def create_calendar_event(
 
 
 @app.get("/organizations/{organization_id}/trend-signals", response_model=list[TrendSignal])
-def list_trend_signals(organization_id: str) -> list[TrendSignal]:
+def list_trend_signals(
+    organization_id: str,
+    authorization: str | None = Header(default=None),
+) -> list[TrendSignal]:
     try:
+        actor_from_optional_auth(organization_id, authorization)
         return store.list_trend_signals(organization_id)
+    except AuthenticationError as error:
+        raise authentication_failed(error) from error
     except NotFoundError as error:
         raise not_found(error) from error
 
@@ -592,7 +688,7 @@ def create_trend_signal(
     authorization: str | None = Header(default=None),
 ) -> TrendSignal:
     try:
-        actor_id = actor_from_auth(organization_id, authorization, actor_id)
+        actor_id = require_org_role(organization_id, authorization, {UserRole.owner, UserRole.editor}, actor_id)
         return store.create_trend_signal(organization_id, payload, actor_id)
     except AuthenticationError as error:
         raise authentication_failed(error) from error
@@ -608,11 +704,13 @@ def generate_trend_opportunities(
     authorization: str | None = Header(default=None),
 ) -> dict[str, object]:
     try:
-        actor_from_optional_auth(organization_id, authorization)
-        opportunities = store.generate_trend_opportunities(organization_id)
+        actor_id = require_org_role(organization_id, authorization, {UserRole.owner, UserRole.editor}, "local_user")
+        opportunities = store.generate_trend_opportunities(organization_id, actor_id)
         return {"opportunities": opportunities}
     except AuthenticationError as error:
         raise authentication_failed(error) from error
+    except PermissionDeniedError as error:
+        raise permission_denied(error) from error
     except NotFoundError as error:
         raise not_found(error) from error
 
@@ -623,22 +721,31 @@ def create_brief(
     authorization: str | None = Header(default=None),
 ) -> ContentBrief:
     try:
-        brief = store.create_brief(opportunity_id)
-        token = bearer_token(authorization)
-        if token:
-            actor_id = store.actor_id_for_token(token, brief.organization_id)
+        opportunity = store.get_opportunity(opportunity_id)
+        actor_id = require_org_role(opportunity.organization_id, authorization, {UserRole.owner, UserRole.editor}, "local_user")
+        brief = store.create_brief(opportunity_id, actor_id)
+        if actor_id:
             store.mark_onboarding_step(brief.organization_id, actor_id, OnboardingStep.first_brief_created)
         return brief
     except AuthenticationError as error:
         raise authentication_failed(error) from error
+    except PermissionDeniedError as error:
+        raise permission_denied(error) from error
     except NotFoundError as error:
         raise not_found(error) from error
 
 
 @app.get("/briefs/{brief_id}", response_model=ContentBrief)
-def get_brief(brief_id: str) -> ContentBrief:
+def get_brief(
+    brief_id: str,
+    authorization: str | None = Header(default=None),
+) -> ContentBrief:
     try:
-        return store.get_brief(brief_id)
+        brief = store.get_brief(brief_id)
+        actor_from_optional_auth(brief.organization_id, authorization)
+        return brief
+    except AuthenticationError as error:
+        raise authentication_failed(error) from error
     except NotFoundError as error:
         raise not_found(error) from error
 
@@ -651,23 +758,32 @@ def generate_drafts(
     authorization: str | None = Header(default=None),
 ) -> DraftCreateResult:
     try:
-        drafts = store.generate_drafts(brief_id, platform, content_type)
+        brief = store.get_brief(brief_id)
+        actor_id = require_org_role(brief.organization_id, authorization, {UserRole.owner, UserRole.editor}, "local_user")
+        drafts = store.generate_drafts(brief_id, platform, content_type, actor_id)
         if drafts:
-            token = bearer_token(authorization)
-            if token:
-                actor_id = store.actor_id_for_token(token, drafts[0].organization_id)
+            if actor_id:
                 store.mark_onboarding_step(drafts[0].organization_id, actor_id, OnboardingStep.first_draft_created)
         return DraftCreateResult(drafts=drafts)
     except AuthenticationError as error:
         raise authentication_failed(error) from error
+    except PermissionDeniedError as error:
+        raise permission_denied(error) from error
     except NotFoundError as error:
         raise not_found(error) from error
 
 
 @app.get("/drafts/{draft_id}", response_model=Draft)
-def get_draft(draft_id: str) -> Draft:
+def get_draft(
+    draft_id: str,
+    authorization: str | None = Header(default=None),
+) -> Draft:
     try:
-        return store.get_draft(draft_id)
+        draft = store.get_draft(draft_id)
+        actor_from_optional_auth(draft.organization_id, authorization)
+        return draft
+    except AuthenticationError as error:
+        raise authentication_failed(error) from error
     except NotFoundError as error:
         raise not_found(error) from error
 
@@ -680,18 +796,24 @@ def update_draft(
 ) -> Draft:
     try:
         draft = store.get_draft(draft_id)
-        actor_from_optional_auth(draft.organization_id, authorization)
-        return store.update_draft_body(draft_id, payload.body)
+        actor_id = require_org_role(draft.organization_id, authorization, {UserRole.owner, UserRole.editor}, "local_user")
+        return store.update_draft_body(draft_id, payload.body, actor_id)
     except AuthenticationError as error:
         raise authentication_failed(error) from error
+    except PermissionDeniedError as error:
+        raise permission_denied(error) from error
     except NotFoundError as error:
         raise not_found(error) from error
 
 
 @app.get("/drafts/{draft_id}/reviewer-package", response_model=ReviewerPackage)
-def reviewer_package(draft_id: str) -> ReviewerPackage:
+def reviewer_package(
+    draft_id: str,
+    authorization: str | None = Header(default=None),
+) -> ReviewerPackage:
     try:
         draft = store.get_draft(draft_id)
+        actor_from_optional_auth(draft.organization_id, authorization)
         brief = store.get_brief(draft.content_brief_id)
         opportunity = store.get_opportunity(brief.opportunity_id)
         sources = [store.get_source(source_id) for source_id in brief.source_ids]
@@ -714,6 +836,8 @@ def reviewer_package(draft_id: str) -> ReviewerPackage:
             decision_history=store.list_draft_decisions(draft.id),
             suggested_action=suggested_action,
         )
+    except AuthenticationError as error:
+        raise authentication_failed(error) from error
     except NotFoundError as error:
         raise not_found(error) from error
 
@@ -725,10 +849,12 @@ def regenerate_draft(
 ) -> DraftCreateResult:
     try:
         draft = store.get_draft(draft_id)
-        actor_from_optional_auth(draft.organization_id, authorization)
-        return DraftCreateResult(drafts=store.regenerate_drafts_for_draft(draft_id))
+        actor_id = require_org_role(draft.organization_id, authorization, {UserRole.owner, UserRole.editor}, "local_user")
+        return DraftCreateResult(drafts=store.regenerate_drafts_for_draft(draft_id, actor_id))
     except AuthenticationError as error:
         raise authentication_failed(error) from error
+    except PermissionDeniedError as error:
+        raise permission_denied(error) from error
     except NotFoundError as error:
         raise not_found(error) from error
 
@@ -741,15 +867,12 @@ def approve_draft(
     authorization: str | None = Header(default=None),
 ) -> object:
     try:
-        token = bearer_token(authorization)
-        if token:
-            draft = store.get_draft(draft_id)
-            actor_id = store.actor_id_for_token(token, draft.organization_id)
+        draft = store.get_draft(draft_id)
+        actor_id = require_org_role(draft.organization_id, authorization, {UserRole.owner, UserRole.reviewer}, actor_id)
         decision = store.approve_draft(draft_id, payload, actor_id)
-        if token:
-            draft = store.get_draft(draft_id)
-            if draft.status == DraftStatus.approved:
-                store.mark_onboarding_step(draft.organization_id, actor_id, OnboardingStep.first_artifact_approved)
+        draft = store.get_draft(draft_id)
+        if bearer_token(authorization) and draft.status == DraftStatus.approved:
+            store.mark_onboarding_step(draft.organization_id, actor_id, OnboardingStep.first_artifact_approved)
         return decision
     except AuthenticationError as error:
         raise authentication_failed(error) from error
@@ -769,12 +892,14 @@ def reject_draft(
 ) -> object:
     try:
         draft = store.get_draft(draft_id)
-        actor_from_optional_auth(draft.organization_id, authorization)
-        return store.reject_draft(draft_id, payload)
+        actor_id = require_org_role(draft.organization_id, authorization, {UserRole.owner, UserRole.reviewer}, "local_user")
+        return store.reject_draft(draft_id, payload, actor_id)
     except AuthenticationError as error:
         raise authentication_failed(error) from error
     except ReviewDecisionRequiredError as error:
         raise bad_review_decision(error) from error
+    except PermissionDeniedError as error:
+        raise permission_denied(error) from error
     except NotFoundError as error:
         raise not_found(error) from error
 
@@ -786,12 +911,14 @@ def export_draft(
 ) -> object:
     try:
         draft = store.get_draft(draft_id)
-        actor_from_optional_auth(draft.organization_id, authorization)
-        return store.export_draft(draft_id)
+        actor_id = require_org_role(draft.organization_id, authorization, {UserRole.owner, UserRole.editor}, "local_user")
+        return store.export_draft(draft_id, actor_id)
     except AuthenticationError as error:
         raise authentication_failed(error) from error
     except ApprovalBlockedError as error:
         raise approval_blocked(error) from error
+    except PermissionDeniedError as error:
+        raise permission_denied(error) from error
     except NotFoundError as error:
         raise not_found(error) from error
 
@@ -804,10 +931,12 @@ def schedule_draft(
 ) -> object:
     try:
         draft = store.get_draft(draft_id)
-        actor_from_optional_auth(draft.organization_id, authorization)
-        return store.schedule_draft(draft_id, payload.scheduled_for, payload.reason)
+        actor_id = require_org_role(draft.organization_id, authorization, {UserRole.owner, UserRole.editor}, "local_user")
+        return store.schedule_draft(draft_id, payload.scheduled_for, payload.reason, actor_id)
     except AuthenticationError as error:
         raise authentication_failed(error) from error
+    except PermissionDeniedError as error:
+        raise permission_denied(error) from error
     except NotFoundError as error:
         raise not_found(error) from error
 
@@ -820,25 +949,42 @@ def publish_draft_to_linkedin(
 ) -> PublishResult:
     try:
         draft = store.get_draft(draft_id)
-        actor_from_optional_auth(draft.organization_id, authorization)
-        return store.publish_draft_to_linkedin(draft_id, payload)
+        actor_id = require_org_role(draft.organization_id, authorization, {UserRole.owner, UserRole.editor}, "local_user")
+        return store.publish_draft_to_linkedin(draft_id, payload, actor_id)
     except AuthenticationError as error:
         raise authentication_failed(error) from error
     except ApprovalBlockedError as error:
         raise approval_blocked(error) from error
+    except PermissionDeniedError as error:
+        raise permission_denied(error) from error
     except NotFoundError as error:
         raise not_found(error) from error
 
 
 @app.get("/organizations/{organization_id}/memory")
-def memory(organization_id: str) -> list[object]:
-    return store.list_memory(organization_id)
+def memory(
+    organization_id: str,
+    authorization: str | None = Header(default=None),
+) -> list[object]:
+    try:
+        actor_from_optional_auth(organization_id, authorization)
+        return store.list_memory(organization_id)
+    except AuthenticationError as error:
+        raise authentication_failed(error) from error
+    except NotFoundError as error:
+        raise not_found(error) from error
 
 
 @app.get("/organizations/{organization_id}/preference-suggestions", response_model=list[PreferenceSuggestion])
-def list_preference_suggestions(organization_id: str) -> list[PreferenceSuggestion]:
+def list_preference_suggestions(
+    organization_id: str,
+    authorization: str | None = Header(default=None),
+) -> list[PreferenceSuggestion]:
     try:
+        actor_from_optional_auth(organization_id, authorization)
         return store.list_preference_suggestions(organization_id)
+    except AuthenticationError as error:
+        raise authentication_failed(error) from error
     except NotFoundError as error:
         raise not_found(error) from error
 
@@ -849,10 +995,12 @@ def generate_preference_suggestions(
     authorization: str | None = Header(default=None),
 ) -> list[PreferenceSuggestion]:
     try:
-        actor_from_optional_auth(organization_id, authorization)
-        return store.generate_preference_suggestions(organization_id)
+        actor_id = require_org_role(organization_id, authorization, {UserRole.owner, UserRole.editor}, "local_user")
+        return store.generate_preference_suggestions(organization_id, actor_id)
     except AuthenticationError as error:
         raise authentication_failed(error) from error
+    except PermissionDeniedError as error:
+        raise permission_denied(error) from error
     except NotFoundError as error:
         raise not_found(error) from error
 
@@ -866,7 +1014,7 @@ def approve_preference_suggestion(
 ) -> PreferenceSuggestion:
     try:
         suggestion = store.get_preference_suggestion(suggestion_id)
-        actor_id = actor_from_auth(suggestion.organization_id, authorization, actor_id)
+        actor_id = require_org_role(suggestion.organization_id, authorization, {UserRole.owner, UserRole.editor}, actor_id)
         return store.approve_preference_suggestion(suggestion_id, payload, actor_id)
     except AuthenticationError as error:
         raise authentication_failed(error) from error
@@ -885,7 +1033,7 @@ def dismiss_preference_suggestion(
 ) -> PreferenceSuggestion:
     try:
         suggestion = store.get_preference_suggestion(suggestion_id)
-        actor_id = actor_from_auth(suggestion.organization_id, authorization, actor_id)
+        actor_id = require_org_role(suggestion.organization_id, authorization, {UserRole.owner, UserRole.editor}, actor_id)
         return store.dismiss_preference_suggestion(suggestion_id, payload, actor_id)
     except AuthenticationError as error:
         raise authentication_failed(error) from error
@@ -903,10 +1051,12 @@ def record_memory_performance(
 ) -> PostMemory:
     try:
         memory_item = store.get_memory(memory_id)
-        actor_from_optional_auth(memory_item.organization_id, authorization)
-        return store.record_performance_metrics(memory_id, payload)
+        actor_id = require_org_role(memory_item.organization_id, authorization, {UserRole.owner, UserRole.editor}, "local_user")
+        return store.record_performance_metrics(memory_id, payload, actor_id)
     except AuthenticationError as error:
         raise authentication_failed(error) from error
+    except PermissionDeniedError as error:
+        raise permission_denied(error) from error
     except NotFoundError as error:
         raise not_found(error) from error
 
@@ -917,46 +1067,81 @@ def import_linkedin_analytics(
     authorization: str | None = Header(default=None),
 ) -> list[PostMemory]:
     try:
+        actor_id = require_org_role(organization_id, authorization, {UserRole.owner, UserRole.editor}, "local_user")
+        return store.import_linkedin_analytics(organization_id, actor_id)
+    except AuthenticationError as error:
+        raise authentication_failed(error) from error
+    except PermissionDeniedError as error:
+        raise permission_denied(error) from error
+    except NotFoundError as error:
+        raise not_found(error) from error
+
+
+@app.get("/organizations/{organization_id}/analytics", response_model=AnalyticsDashboard)
+def analytics_dashboard(
+    organization_id: str,
+    authorization: str | None = Header(default=None),
+) -> AnalyticsDashboard:
+    try:
         actor_from_optional_auth(organization_id, authorization)
-        return store.import_linkedin_analytics(organization_id)
+        return store.analytics_dashboard(organization_id)
     except AuthenticationError as error:
         raise authentication_failed(error) from error
     except NotFoundError as error:
         raise not_found(error) from error
 
 
-@app.get("/organizations/{organization_id}/analytics", response_model=AnalyticsDashboard)
-def analytics_dashboard(organization_id: str) -> AnalyticsDashboard:
-    try:
-        return store.analytics_dashboard(organization_id)
-    except NotFoundError as error:
-        raise not_found(error) from error
-
-
 @app.get("/organizations/{organization_id}/strategy", response_model=StrategyDashboard)
-def strategy_dashboard(organization_id: str) -> StrategyDashboard:
+def strategy_dashboard(
+    organization_id: str,
+    authorization: str | None = Header(default=None),
+) -> StrategyDashboard:
     try:
+        actor_from_optional_auth(organization_id, authorization)
         return store.strategy_dashboard(organization_id)
+    except AuthenticationError as error:
+        raise authentication_failed(error) from error
     except NotFoundError as error:
         raise not_found(error) from error
 
 
 @app.get("/organizations/{organization_id}/content-artifacts", response_model=list[ContentArtifact])
-def content_artifacts(organization_id: str) -> list[ContentArtifact]:
+def content_artifacts(
+    organization_id: str,
+    authorization: str | None = Header(default=None),
+) -> list[ContentArtifact]:
     try:
+        actor_from_optional_auth(organization_id, authorization)
         return store.list_content_artifacts(organization_id)
+    except AuthenticationError as error:
+        raise authentication_failed(error) from error
     except NotFoundError as error:
         raise not_found(error) from error
 
 
 @app.get("/organizations/{organization_id}/calendar", response_model=list[Draft])
-def calendar(organization_id: str) -> list[Draft]:
+def calendar(
+    organization_id: str,
+    authorization: str | None = Header(default=None),
+) -> list[Draft]:
     try:
+        actor_from_optional_auth(organization_id, authorization)
         return store.list_calendar(organization_id)
+    except AuthenticationError as error:
+        raise authentication_failed(error) from error
     except NotFoundError as error:
         raise not_found(error) from error
 
 
 @app.get("/organizations/{organization_id}/audit-logs")
-def audit_logs(organization_id: str) -> list[object]:
-    return store.list_audit_logs(organization_id)
+def audit_logs(
+    organization_id: str,
+    authorization: str | None = Header(default=None),
+) -> list[object]:
+    try:
+        actor_from_optional_auth(organization_id, authorization)
+        return store.list_audit_logs(organization_id)
+    except AuthenticationError as error:
+        raise authentication_failed(error) from error
+    except NotFoundError as error:
+        raise not_found(error) from error
