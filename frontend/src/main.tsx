@@ -217,6 +217,25 @@ type ContentArtifact = {
   published_at?: string | null;
 };
 
+type BackgroundJob = {
+  id: string;
+  organization_id: string;
+  actor_id: string;
+  kind: string;
+  status: "queued" | "running" | "succeeded" | "failed";
+  entity_type: string;
+  entity_id: string;
+  payload: Record<string, unknown>;
+  result: Record<string, unknown>;
+  error_message?: string | null;
+  attempt_count: number;
+  max_attempts: number;
+  queued_at: string;
+  started_at?: string | null;
+  finished_at?: string | null;
+  updated_at: string;
+};
+
 type PillarCoverage = {
   pillar: string;
   source_count: number;
@@ -873,6 +892,7 @@ function App() {
   const [analyticsDashboard, setAnalyticsDashboard] = useState<AnalyticsDashboard | null>(null);
   const [contentArtifacts, setContentArtifacts] = useState<ContentArtifact[]>([]);
   const [strategyDashboard, setStrategyDashboard] = useState<StrategyDashboard | null>(null);
+  const [jobs, setJobs] = useState<BackgroundJob[]>([]);
   const [metricsForm, setMetricsForm] = useState<MetricsForm>(emptyMetricsForm);
   const [users, setUsers] = useState<WorkspaceUser[]>([]);
   const [userForm, setUserForm] = useState<UserForm>(emptyUserForm);
@@ -922,6 +942,7 @@ function App() {
         api<AnalyticsDashboard>(`/organizations/${data.organization.id}/analytics`).then(setAnalyticsDashboard),
         api<ContentArtifact[]>(`/organizations/${data.organization.id}/content-artifacts`).then(setContentArtifacts),
         api<StrategyDashboard>(`/organizations/${data.organization.id}/strategy`).then(setStrategyDashboard),
+        api<BackgroundJob[]>(`/organizations/${data.organization.id}/jobs`).then(setJobs),
         api<WorkspaceUser[]>(`/organizations/${data.organization.id}/users`).then(setUsers),
         api<ApprovalPolicy>(`/organizations/${data.organization.id}/approval-policy`).then((policy) => {
           setApprovalPolicy(policy);
@@ -968,7 +989,32 @@ function App() {
     await Promise.allSettled([
       api<ContentArtifact[]>(`/organizations/${organizationId}/content-artifacts`).then(setContentArtifacts),
       api<StrategyDashboard>(`/organizations/${organizationId}/strategy`).then(setStrategyDashboard),
+      api<BackgroundJob[]>(`/organizations/${organizationId}/jobs`).then(setJobs),
     ]);
+  }
+
+  async function refreshJobs(organizationId = bootstrap?.organization.id) {
+    if (!organizationId) return;
+    setJobs(await api<BackgroundJob[]>(`/organizations/${organizationId}/jobs`));
+  }
+
+  async function retryJob(jobId: string) {
+    if (!requirePermission(canEditContent, knowledgePermissionMessage)) return;
+    setBusy(true);
+    try {
+      await api(`/jobs/${jobId}/retry`, { method: "POST" });
+      await refreshJobs();
+      await refreshProductSurfaces();
+      if (bootstrap) {
+        await refreshSources();
+        await refreshMemoryAndAnalytics();
+      }
+      setNotice("Job retried successfully.");
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Job retry failed.");
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function refreshCurrentWorkspaceState() {
@@ -1018,6 +1064,8 @@ function App() {
     { id: "claims", label: "Claims" },
     { id: "linkedin", label: "LinkedIn" },
   ];
+  const recentJobs = jobs.slice(0, 5);
+  const failedJobCount = jobs.filter((job) => job.status === "failed").length;
 
   function requirePermission(allowed: boolean, message: string): boolean {
     if (allowed) return true;
@@ -1459,6 +1507,7 @@ function App() {
         api<AnalyticsDashboard>(`/organizations/${response.workspace.organization.id}/analytics`).then(setAnalyticsDashboard),
         api<ContentArtifact[]>(`/organizations/${response.workspace.organization.id}/content-artifacts`).then(setContentArtifacts),
         api<StrategyDashboard>(`/organizations/${response.workspace.organization.id}/strategy`).then(setStrategyDashboard),
+        api<BackgroundJob[]>(`/organizations/${response.workspace.organization.id}/jobs`).then(setJobs),
         api<WorkspaceUser[]>(`/organizations/${response.workspace.organization.id}/users`).then(setUsers),
         api<ApprovalPolicy>(`/organizations/${response.workspace.organization.id}/approval-policy`).then((policy) => {
           setApprovalPolicy(policy);
@@ -1486,6 +1535,7 @@ function App() {
     setCurrentUser(null);
     setOnboarding(null);
     setBootstrap(null);
+    setJobs([]);
     setAuthForm(emptyAuthForm);
     setAuthErrors([]);
     setBootstrapError("");
@@ -2754,6 +2804,48 @@ function App() {
               </div>
             )}
           </section>}
+
+          {activeView === "settings" && recentJobs.length > 0 && (
+            <section className="panel band operations-panel">
+              <div className="section-heading">
+                <div>
+                  <p className="eyebrow">Operations</p>
+                  <h2>Recent background jobs</h2>
+                </div>
+                <span className={failedJobCount > 0 ? "review-status warning" : "review-status"}>
+                  {failedJobCount > 0 ? `${failedJobCount} failed` : "All clear"}
+                </span>
+              </div>
+              <div className="team-list">
+                {recentJobs.map((job) => (
+                  <article className="team-row" key={job.id}>
+                    <div>
+                      <strong>{job.kind.replace(/_/g, " ")}</strong>
+                      <span>
+                        {job.status} / attempt {job.attempt_count}
+                        {typeof job.result.count === "number" ? ` / ${job.result.count} item${job.result.count === 1 ? "" : "s"}` : ""}
+                        {job.error_message ? ` / ${job.error_message}` : ""}
+                      </span>
+                    </div>
+                    {job.status === "failed" ? (
+                      <button
+                        className="icon-button"
+                        onClick={() => retryJob(job.id)}
+                        disabled={busy || !canEditContent || job.attempt_count >= job.max_attempts}
+                        title={canEditContent ? "Retry job" : knowledgePermissionMessage}
+                        type="button"
+                      >
+                        <RefreshCcw size={16} />
+                        <span>Retry</span>
+                      </button>
+                    ) : (
+                      <span className={`status-pill ${job.status}`}>{new Date(job.updated_at).toLocaleString()}</span>
+                    )}
+                  </article>
+                ))}
+              </div>
+            </section>
+          )}
 
           {activeView === "sources" && <section className="panel band source-library-panel">
             <div className="section-heading">

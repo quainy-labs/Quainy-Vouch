@@ -17,6 +17,8 @@ from app.schemas import (
     ApprovalDecision,
     ApprovalPolicy,
     AuditLog,
+    BackgroundJob,
+    BackgroundJobLog,
     CalendarEvent,
     CalendarEventCreate,
     ClaimCheck,
@@ -26,6 +28,8 @@ from app.schemas import (
     Decision,
     Draft,
     DraftPublishCreate,
+    JobKind,
+    JobStatus,
     LinkedInIntegration,
     LinkedInIntegrationUpdate,
     OnboardingState,
@@ -499,6 +503,8 @@ class PostgresDataStore(DataStore):
         self._load_preference_suggestions()
         self._load_linkedin_integrations()
         self._load_audit_logs()
+        self._load_jobs()
+        self._load_job_logs()
         self._load_sessions()
 
     def _load_accounts(self) -> None:
@@ -828,6 +834,46 @@ class PostgresDataStore(DataStore):
                     entity_type=row["entity_type"],
                     entity_id=row["entity_id"],
                     metadata=row["metadata"],
+                    created_at=row["created_at"],
+                )
+            )
+
+    def _load_jobs(self) -> None:
+        with self._connect() as connection:
+            rows = connection.execute("SELECT * FROM background_jobs ORDER BY queued_at").fetchall()
+        for row in rows:
+            job = BackgroundJob(
+                id=row["id"],
+                organization_id=row["organization_id"],
+                actor_id=row["actor_id"] or "local_user",
+                kind=JobKind(row["kind"]),
+                status=JobStatus(row["status"]),
+                entity_type=row["entity_type"],
+                entity_id=row["entity_id"],
+                payload=row["payload"] or {},
+                result=row["result"] or {},
+                error_message=row["error_message"],
+                attempt_count=row["attempt_count"],
+                max_attempts=row["max_attempts"],
+                queued_at=row["queued_at"],
+                started_at=row["started_at"],
+                finished_at=row["finished_at"],
+                updated_at=row["updated_at"],
+            )
+            self.jobs[job.id] = job
+
+    def _load_job_logs(self) -> None:
+        with self._connect() as connection:
+            rows = connection.execute("SELECT * FROM background_job_logs ORDER BY created_at").fetchall()
+        for row in rows:
+            self.job_logs.append(
+                BackgroundJobLog(
+                    id=row["id"],
+                    job_id=row["job_id"],
+                    organization_id=row["organization_id"],
+                    message=row["message"],
+                    level=row["level"],
+                    metadata=row["metadata"] or {},
                     created_at=row["created_at"],
                 )
             )
@@ -1580,3 +1626,72 @@ class PostgresDataStore(DataStore):
         for audit in self.audit_logs:
             if audit.organization_id == organization_id:
                 self._persist_audit_log(audit)
+
+    def _job_changed(self, job: BackgroundJob) -> None:
+        self._persist_job(job)
+
+    def _job_log_added(self, log: BackgroundJobLog) -> None:
+        self._persist_job_log(log)
+
+    def _persist_job(self, job: BackgroundJob) -> None:
+        with self._connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO background_jobs (
+                    id, organization_id, actor_id, kind, status, entity_type, entity_id,
+                    payload, result, error_message, attempt_count, max_attempts,
+                    queued_at, started_at, finished_at, updated_at
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (id) DO UPDATE SET
+                    actor_id = EXCLUDED.actor_id,
+                    status = EXCLUDED.status,
+                    payload = EXCLUDED.payload,
+                    result = EXCLUDED.result,
+                    error_message = EXCLUDED.error_message,
+                    attempt_count = EXCLUDED.attempt_count,
+                    max_attempts = EXCLUDED.max_attempts,
+                    started_at = EXCLUDED.started_at,
+                    finished_at = EXCLUDED.finished_at,
+                    updated_at = EXCLUDED.updated_at
+                """,
+                (
+                    job.id,
+                    job.organization_id,
+                    job.actor_id,
+                    job.kind.value,
+                    job.status.value,
+                    job.entity_type,
+                    job.entity_id,
+                    _json(job.payload),
+                    _json(job.result),
+                    job.error_message,
+                    job.attempt_count,
+                    job.max_attempts,
+                    job.queued_at,
+                    job.started_at,
+                    job.finished_at,
+                    job.updated_at,
+                ),
+            )
+
+    def _persist_job_log(self, log: BackgroundJobLog) -> None:
+        with self._connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO background_job_logs (
+                    id, job_id, organization_id, message, level, metadata, created_at
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (id) DO NOTHING
+                """,
+                (
+                    log.id,
+                    log.job_id,
+                    log.organization_id,
+                    log.message,
+                    log.level,
+                    _json(log.metadata),
+                    log.created_at,
+                ),
+            )

@@ -12,6 +12,8 @@ from app.schemas import (
     ApprovalPolicyUpdate,
     AccountLogin,
     AnalyticsDashboard,
+    BackgroundJob,
+    BackgroundJobLog,
     CalendarEvent,
     CalendarEventCreate,
     CompanyProfile,
@@ -26,6 +28,7 @@ from app.schemas import (
     DraftScheduleCreate,
     DraftStatus,
     DraftUpdate,
+    JobKind,
     LinkedInIntegration,
     LinkedInIntegrationUpdate,
     OnboardingDecision,
@@ -183,6 +186,18 @@ def require_org_role(
     actor_id = actor_from_auth(organization_id, authorization, fallback_actor_id)
     store.require_role(organization_id, actor_id, allowed_roles)
     return actor_id
+
+
+def summarize_list_result(items: list[object], id_attr: str = "id") -> dict[str, object]:
+    return {
+        "count": len(items),
+        "ids": [getattr(item, id_attr) for item in items if getattr(item, id_attr, None)],
+    }
+
+
+def summarize_one_result(item: object, id_attr: str = "id") -> dict[str, object]:
+    item_id = getattr(item, id_attr, None)
+    return {"id": item_id} if item_id else {}
 
 
 @app.get("/health")
@@ -483,7 +498,16 @@ def create_source(
     try:
         actor_id = require_org_role(organization_id, authorization, {UserRole.owner, UserRole.editor}, actor_id)
         source = store.create_source(organization_id, payload, actor_id)
-        store.ingest_source(source.id, actor_id)
+        store.run_job(
+            organization_id,
+            actor_id,
+            JobKind.source_ingest,
+            "source",
+            source.id,
+            {"source_id": source.id, "source_type": source.source_type},
+            lambda: store.ingest_source(source.id, actor_id),
+            lambda chunks: {"chunk_count": len(chunks)},
+        )
         if authorization:
             store.mark_onboarding_step(organization_id, actor_id, OnboardingStep.source_added)
         return source
@@ -552,7 +576,16 @@ def ingest_source(
     try:
         source = store.get_source(source_id)
         actor_id = require_org_role(source.organization_id, authorization, {UserRole.owner, UserRole.editor}, actor_id)
-        chunks = store.ingest_source(source_id, actor_id)
+        _job, chunks = store.run_job(
+            source.organization_id,
+            actor_id,
+            JobKind.source_ingest,
+            "source",
+            source_id,
+            {"source_id": source_id},
+            lambda: store.ingest_source(source_id, actor_id),
+            lambda result: {"chunk_count": len(result)},
+        )
         return {"source_id": source_id, "chunk_count": len(chunks), "chunks": chunks}
     except AuthenticationError as error:
         raise authentication_failed(error) from error
@@ -571,7 +604,16 @@ def refresh_source(
     try:
         source = store.get_source(source_id)
         actor_id = require_org_role(source.organization_id, authorization, {UserRole.owner, UserRole.editor}, actor_id)
-        chunks = store.ingest_source(source_id, actor_id)
+        _job, chunks = store.run_job(
+            source.organization_id,
+            actor_id,
+            JobKind.source_refresh,
+            "source",
+            source_id,
+            {"source_id": source_id},
+            lambda: store.ingest_source(source_id, actor_id),
+            lambda result: {"chunk_count": len(result)},
+        )
         return {"chunks": chunks, "message": "Source refreshed from the selected page snapshot."}
     except AuthenticationError as error:
         raise authentication_failed(error) from error
@@ -606,7 +648,16 @@ def generate_opportunities(
 ) -> dict[str, object]:
     try:
         actor_id = require_org_role(organization_id, authorization, {UserRole.owner, UserRole.editor}, "local_user")
-        opportunities = store.generate_opportunities(organization_id, actor_id)
+        _job, opportunities = store.run_job(
+            organization_id,
+            actor_id,
+            JobKind.opportunity_generation,
+            "organization",
+            organization_id,
+            {"organization_id": organization_id},
+            lambda: store.generate_opportunities(organization_id, actor_id),
+            summarize_list_result,
+        )
         if actor_id:
             store.mark_onboarding_step(organization_id, actor_id, OnboardingStep.first_opportunity_generated)
         if not opportunities:
@@ -705,7 +756,16 @@ def generate_trend_opportunities(
 ) -> dict[str, object]:
     try:
         actor_id = require_org_role(organization_id, authorization, {UserRole.owner, UserRole.editor}, "local_user")
-        opportunities = store.generate_trend_opportunities(organization_id, actor_id)
+        _job, opportunities = store.run_job(
+            organization_id,
+            actor_id,
+            JobKind.trend_opportunity_generation,
+            "organization",
+            organization_id,
+            {"organization_id": organization_id},
+            lambda: store.generate_trend_opportunities(organization_id, actor_id),
+            summarize_list_result,
+        )
         return {"opportunities": opportunities}
     except AuthenticationError as error:
         raise authentication_failed(error) from error
@@ -760,7 +820,16 @@ def generate_drafts(
     try:
         brief = store.get_brief(brief_id)
         actor_id = require_org_role(brief.organization_id, authorization, {UserRole.owner, UserRole.editor}, "local_user")
-        drafts = store.generate_drafts(brief_id, platform, content_type, actor_id)
+        _job, drafts = store.run_job(
+            brief.organization_id,
+            actor_id,
+            JobKind.draft_generation,
+            "brief",
+            brief_id,
+            {"brief_id": brief_id, "platform": platform, "content_type": content_type},
+            lambda: store.generate_drafts(brief_id, platform, content_type, actor_id),
+            summarize_list_result,
+        )
         if drafts:
             if actor_id:
                 store.mark_onboarding_step(drafts[0].organization_id, actor_id, OnboardingStep.first_draft_created)
@@ -850,7 +919,17 @@ def regenerate_draft(
     try:
         draft = store.get_draft(draft_id)
         actor_id = require_org_role(draft.organization_id, authorization, {UserRole.owner, UserRole.editor}, "local_user")
-        return DraftCreateResult(drafts=store.regenerate_drafts_for_draft(draft_id, actor_id))
+        _job, drafts = store.run_job(
+            draft.organization_id,
+            actor_id,
+            JobKind.draft_regeneration,
+            "draft",
+            draft_id,
+            {"draft_id": draft_id},
+            lambda: store.regenerate_drafts_for_draft(draft_id, actor_id),
+            summarize_list_result,
+        )
+        return DraftCreateResult(drafts=drafts)
     except AuthenticationError as error:
         raise authentication_failed(error) from error
     except PermissionDeniedError as error:
@@ -950,11 +1029,131 @@ def publish_draft_to_linkedin(
     try:
         draft = store.get_draft(draft_id)
         actor_id = require_org_role(draft.organization_id, authorization, {UserRole.owner, UserRole.editor}, "local_user")
-        return store.publish_draft_to_linkedin(draft_id, payload, actor_id)
+        _job, result = store.run_job(
+            draft.organization_id,
+            actor_id,
+            JobKind.linkedin_publish,
+            "draft",
+            draft_id,
+            payload.model_dump(mode="json"),
+            lambda: store.publish_draft_to_linkedin(draft_id, payload, actor_id),
+            lambda publish_result: publish_result.model_dump(mode="json"),
+        )
+        return result
     except AuthenticationError as error:
         raise authentication_failed(error) from error
     except ApprovalBlockedError as error:
         raise approval_blocked(error) from error
+    except PermissionDeniedError as error:
+        raise permission_denied(error) from error
+    except NotFoundError as error:
+        raise not_found(error) from error
+
+
+@app.get("/organizations/{organization_id}/jobs", response_model=list[BackgroundJob])
+def list_jobs(
+    organization_id: str,
+    authorization: str | None = Header(default=None),
+) -> list[BackgroundJob]:
+    try:
+        actor_from_optional_auth(organization_id, authorization)
+        return store.list_jobs(organization_id)
+    except AuthenticationError as error:
+        raise authentication_failed(error) from error
+    except NotFoundError as error:
+        raise not_found(error) from error
+
+
+@app.get("/jobs/{job_id}")
+def get_job(
+    job_id: str,
+    authorization: str | None = Header(default=None),
+) -> dict[str, BackgroundJob | list[BackgroundJobLog]]:
+    try:
+        job = store.get_job(job_id)
+        actor_from_optional_auth(job.organization_id, authorization)
+        return {"job": job, "logs": store.list_job_logs(job_id)}
+    except AuthenticationError as error:
+        raise authentication_failed(error) from error
+    except NotFoundError as error:
+        raise not_found(error) from error
+
+
+@app.post("/jobs/{job_id}/retry")
+def retry_job(
+    job_id: str,
+    authorization: str | None = Header(default=None),
+) -> dict[str, BackgroundJob | list[BackgroundJobLog]]:
+    try:
+        job = store.get_job(job_id)
+        actor_id = require_org_role(job.organization_id, authorization, {UserRole.owner, UserRole.editor}, "local_user")
+        job = store.reset_job_for_retry(job_id, actor_id)
+        if job.kind in {JobKind.source_ingest, JobKind.source_refresh}:
+            store.run_existing_job(
+                job.id,
+                lambda: store.ingest_source(job.entity_id, actor_id),
+                lambda chunks: {"chunk_count": len(chunks)},
+            )
+        elif job.kind == JobKind.opportunity_generation:
+            store.run_existing_job(
+                job.id,
+                lambda: store.generate_opportunities(job.organization_id, actor_id),
+                summarize_list_result,
+            )
+        elif job.kind == JobKind.trend_opportunity_generation:
+            store.run_existing_job(
+                job.id,
+                lambda: store.generate_trend_opportunities(job.organization_id, actor_id),
+                summarize_list_result,
+            )
+        elif job.kind == JobKind.draft_generation:
+            store.run_existing_job(
+                job.id,
+                lambda: store.generate_drafts(
+                    str(job.payload["brief_id"]),
+                    str(job.payload.get("platform", "linkedin")),
+                    str(job.payload.get("content_type", "company_post")),
+                    actor_id,
+                ),
+                summarize_list_result,
+            )
+        elif job.kind == JobKind.draft_regeneration:
+            store.run_existing_job(
+                job.id,
+                lambda: store.regenerate_drafts_for_draft(job.entity_id, actor_id),
+                summarize_list_result,
+            )
+        elif job.kind == JobKind.linkedin_publish:
+            payload = DraftPublishCreate(**job.payload)
+            store.run_existing_job(
+                job.id,
+                lambda: store.publish_draft_to_linkedin(job.entity_id, payload, actor_id),
+                lambda result: result.model_dump(mode="json"),
+            )
+        elif job.kind == JobKind.analytics_import:
+            store.run_existing_job(
+                job.id,
+                lambda: store.import_linkedin_analytics(job.organization_id, actor_id),
+                summarize_list_result,
+            )
+        elif job.kind == JobKind.performance_capture:
+            payload = PerformanceMetricsCreate(**job.payload)
+            store.run_existing_job(
+                job.id,
+                lambda: store.record_performance_metrics(job.entity_id, payload, actor_id),
+                summarize_one_result,
+            )
+        elif job.kind == JobKind.preference_suggestion_generation:
+            store.run_existing_job(
+                job.id,
+                lambda: store.generate_preference_suggestions(job.organization_id, actor_id),
+                summarize_list_result,
+            )
+        else:
+            raise PermissionDeniedError("This job kind cannot be retried.")
+        return {"job": store.get_job(job.id), "logs": store.list_job_logs(job.id)}
+    except AuthenticationError as error:
+        raise authentication_failed(error) from error
     except PermissionDeniedError as error:
         raise permission_denied(error) from error
     except NotFoundError as error:
@@ -996,7 +1195,17 @@ def generate_preference_suggestions(
 ) -> list[PreferenceSuggestion]:
     try:
         actor_id = require_org_role(organization_id, authorization, {UserRole.owner, UserRole.editor}, "local_user")
-        return store.generate_preference_suggestions(organization_id, actor_id)
+        _job, suggestions = store.run_job(
+            organization_id,
+            actor_id,
+            JobKind.preference_suggestion_generation,
+            "organization",
+            organization_id,
+            {"organization_id": organization_id},
+            lambda: store.generate_preference_suggestions(organization_id, actor_id),
+            summarize_list_result,
+        )
+        return suggestions
     except AuthenticationError as error:
         raise authentication_failed(error) from error
     except PermissionDeniedError as error:
@@ -1052,7 +1261,17 @@ def record_memory_performance(
     try:
         memory_item = store.get_memory(memory_id)
         actor_id = require_org_role(memory_item.organization_id, authorization, {UserRole.owner, UserRole.editor}, "local_user")
-        return store.record_performance_metrics(memory_id, payload, actor_id)
+        _job, memory = store.run_job(
+            memory_item.organization_id,
+            actor_id,
+            JobKind.performance_capture,
+            "post_memory",
+            memory_id,
+            payload.model_dump(mode="json"),
+            lambda: store.record_performance_metrics(memory_id, payload, actor_id),
+            summarize_one_result,
+        )
+        return memory
     except AuthenticationError as error:
         raise authentication_failed(error) from error
     except PermissionDeniedError as error:
@@ -1068,7 +1287,17 @@ def import_linkedin_analytics(
 ) -> list[PostMemory]:
     try:
         actor_id = require_org_role(organization_id, authorization, {UserRole.owner, UserRole.editor}, "local_user")
-        return store.import_linkedin_analytics(organization_id, actor_id)
+        _job, imported = store.run_job(
+            organization_id,
+            actor_id,
+            JobKind.analytics_import,
+            "organization",
+            organization_id,
+            {"organization_id": organization_id},
+            lambda: store.import_linkedin_analytics(organization_id, actor_id),
+            summarize_list_result,
+        )
+        return imported
     except AuthenticationError as error:
         raise authentication_failed(error) from error
     except PermissionDeniedError as error:

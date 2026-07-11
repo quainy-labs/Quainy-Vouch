@@ -141,6 +141,26 @@ class PreferenceSuggestionKind(str, Enum):
     memory_update = "memory_update"
 
 
+class JobStatus(str, Enum):
+    queued = "queued"
+    running = "running"
+    succeeded = "succeeded"
+    failed = "failed"
+
+
+class JobKind(str, Enum):
+    source_ingest = "source_ingest"
+    source_refresh = "source_refresh"
+    opportunity_generation = "opportunity_generation"
+    trend_opportunity_generation = "trend_opportunity_generation"
+    draft_generation = "draft_generation"
+    draft_regeneration = "draft_regeneration"
+    linkedin_publish = "linkedin_publish"
+    analytics_import = "analytics_import"
+    performance_capture = "performance_capture"
+    preference_suggestion_generation = "preference_suggestion_generation"
+
+
 class OnboardingStep(str, Enum):
     account_created = "account_created"
     organization_created = "organization_created"
@@ -860,6 +880,35 @@ class AuditLog(BaseModel):
     action: str
     entity_type: str
     entity_id: str
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime = Field(default_factory=now_utc)
+
+
+class BackgroundJob(BaseModel):
+    id: str = Field(default_factory=lambda: new_id("job"))
+    organization_id: str
+    actor_id: str = "local_user"
+    kind: JobKind
+    status: JobStatus = JobStatus.queued
+    entity_type: str
+    entity_id: str
+    payload: dict[str, Any] = Field(default_factory=dict)
+    result: dict[str, Any] = Field(default_factory=dict)
+    error_message: str | None = None
+    attempt_count: int = 0
+    max_attempts: int = 3
+    queued_at: datetime = Field(default_factory=now_utc)
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    updated_at: datetime = Field(default_factory=now_utc)
+
+
+class BackgroundJobLog(BaseModel):
+    id: str = Field(default_factory=lambda: new_id("joblog"))
+    job_id: str
+    organization_id: str
+    message: str
+    level: str = "info"
     metadata: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime = Field(default_factory=now_utc)
 

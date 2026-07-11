@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import secrets
 from pathlib import Path
+from typing import Any, Callable
 
 from app.analytics import LocalAnalyticsImportProvider, build_performance_snapshot
 from app.contracts import FormatAdapter
@@ -38,6 +39,8 @@ from app.schemas import (
     AnalyticsDashboard,
     AnalyticsPostSummary,
     AuditLog,
+    BackgroundJob,
+    BackgroundJobLog,
     CalendarEvent,
     CalendarEventCreate,
     CompanyProfile,
@@ -51,6 +54,8 @@ from app.schemas import (
     Draft,
     DraftPublishCreate,
     DraftStatus,
+    JobKind,
+    JobStatus,
     LinkedInIntegration,
     LinkedInIntegrationUpdate,
     OnboardingDecision,
@@ -139,6 +144,8 @@ class DataStore:
         self.preference_suggestions: dict[str, PreferenceSuggestion] = {}
         self.linkedin_integrations: dict[str, LinkedInIntegration] = {}
         self.audit_logs: list[AuditLog] = []
+        self.jobs: dict[str, BackgroundJob] = {}
+        self.job_logs: list[BackgroundJobLog] = []
         self.format_adapters: dict[tuple[str, str], FormatAdapter] = {}
         self.source_connectors = default_source_connectors()
         self.model_provider = build_model_provider()
@@ -479,6 +486,7 @@ class DataStore:
         trend_ids = [item.id for item in self.trend_signals.values() if item.organization_id == organization_id]
         decision_ids = [item.id for item in self.decisions.values() if item.draft_id in draft_ids]
         memory_ids = [item.id for item in self.memory.values() if item.organization_id == organization_id]
+        job_ids = [item.id for item in self.jobs.values() if item.organization_id == organization_id]
         user_keys = [key for key in self.users if key[0] == organization_id]
         counts = {
             "sources": len(source_ids),
@@ -491,6 +499,7 @@ class DataStore:
             "trend_signals": len(trend_ids),
             "decisions": len(decision_ids),
             "memory": len(memory_ids),
+            "jobs": len(job_ids),
             "users": len(user_keys),
             "audit_logs": len([log for log in self.audit_logs if log.organization_id == organization_id]),
         }
@@ -529,6 +538,9 @@ class DataStore:
             self.preference_suggestions.pop(suggestion_id, None)
         for document_id in document_ids:
             self.source_documents.pop(document_id, None)
+        for job_id in job_ids:
+            self.jobs.pop(job_id, None)
+        self.job_logs = [log for log in self.job_logs if log.organization_id != organization_id]
         self.audit_logs = [log for log in self.audit_logs if log.organization_id != organization_id]
         return receipt
 
@@ -1497,6 +1509,149 @@ class DataStore:
             key=lambda draft: (draft.scheduled_for is None, draft.scheduled_for or draft.updated_at),
         )
 
+    def create_job(
+        self,
+        organization_id: str,
+        actor_id: str,
+        kind: JobKind,
+        entity_type: str,
+        entity_id: str,
+        payload: dict[str, Any] | None = None,
+    ) -> BackgroundJob:
+        self.get_organization(organization_id)
+        job = BackgroundJob(
+            organization_id=organization_id,
+            actor_id=actor_id,
+            kind=kind,
+            entity_type=entity_type,
+            entity_id=entity_id,
+            payload=payload or {},
+        )
+        self.jobs[job.id] = job
+        self._job_changed(job)
+        self.log_job(job.id, "Job queued.", {"kind": kind.value, "entity_type": entity_type, "entity_id": entity_id})
+        return job
+
+    def get_job(self, job_id: str) -> BackgroundJob:
+        if job_id not in self.jobs:
+            raise NotFoundError("Job not found")
+        return self.jobs[job_id]
+
+    def list_jobs(self, organization_id: str) -> list[BackgroundJob]:
+        self.get_organization(organization_id)
+        return sorted(
+            [job for job in self.jobs.values() if job.organization_id == organization_id],
+            key=lambda job: job.updated_at,
+            reverse=True,
+        )
+
+    def list_job_logs(self, job_id: str) -> list[BackgroundJobLog]:
+        self.get_job(job_id)
+        return sorted([log for log in self.job_logs if log.job_id == job_id], key=lambda log: log.created_at)
+
+    def log_job(
+        self,
+        job_id: str,
+        message: str,
+        metadata: dict[str, Any] | None = None,
+        level: str = "info",
+    ) -> BackgroundJobLog:
+        job = self.get_job(job_id)
+        log = BackgroundJobLog(
+            job_id=job_id,
+            organization_id=job.organization_id,
+            message=message,
+            level=level,
+            metadata=metadata or {},
+        )
+        self.job_logs.append(log)
+        self._job_log_added(log)
+        return log
+
+    def start_job(self, job_id: str) -> BackgroundJob:
+        job = self.get_job(job_id)
+        now = now_utc()
+        job.status = JobStatus.running
+        job.started_at = now
+        job.finished_at = None
+        job.error_message = None
+        job.attempt_count += 1
+        job.updated_at = now
+        self.jobs[job.id] = job
+        self._job_changed(job)
+        self.log_job(job.id, "Job started.", {"attempt_count": job.attempt_count})
+        return job
+
+    def complete_job(self, job_id: str, result: dict[str, Any] | None = None) -> BackgroundJob:
+        job = self.get_job(job_id)
+        now = now_utc()
+        job.status = JobStatus.succeeded
+        job.result = result or {}
+        job.error_message = None
+        job.finished_at = now
+        job.updated_at = now
+        self.jobs[job.id] = job
+        self._job_changed(job)
+        self.log_job(job.id, "Job completed.", job.result)
+        return job
+
+    def fail_job(self, job_id: str, error: Exception) -> BackgroundJob:
+        job = self.get_job(job_id)
+        now = now_utc()
+        job.status = JobStatus.failed
+        job.error_message = str(error)
+        job.finished_at = now
+        job.updated_at = now
+        self.jobs[job.id] = job
+        self._job_changed(job)
+        self.log_job(job.id, "Job failed.", {"error": str(error)}, level="error")
+        return job
+
+    def reset_job_for_retry(self, job_id: str, actor_id: str) -> BackgroundJob:
+        job = self.get_job(job_id)
+        if job.status != JobStatus.failed:
+            raise PermissionDeniedError("Only failed jobs can be retried.")
+        if job.attempt_count >= job.max_attempts:
+            raise PermissionDeniedError("Job retry limit has been reached.")
+        job.status = JobStatus.queued
+        job.actor_id = actor_id
+        job.error_message = None
+        job.finished_at = None
+        job.updated_at = now_utc()
+        self.jobs[job.id] = job
+        self._job_changed(job)
+        self.log_job(job.id, "Job queued for retry.", {"attempt_count": job.attempt_count, "max_attempts": job.max_attempts})
+        return job
+
+    def run_job(
+        self,
+        organization_id: str,
+        actor_id: str,
+        kind: JobKind,
+        entity_type: str,
+        entity_id: str,
+        payload: dict[str, Any] | None,
+        work: Callable[[], Any],
+        summarize: Callable[[Any], dict[str, Any]] | None = None,
+    ) -> tuple[BackgroundJob, Any]:
+        job = self.create_job(organization_id, actor_id, kind, entity_type, entity_id, payload)
+        return self.run_existing_job(job.id, work, summarize)
+
+    def run_existing_job(
+        self,
+        job_id: str,
+        work: Callable[[], Any],
+        summarize: Callable[[Any], dict[str, Any]] | None = None,
+    ) -> tuple[BackgroundJob, Any]:
+        self.start_job(job_id)
+        try:
+            result = work()
+        except Exception as error:
+            self.fail_job(job_id, error)
+            raise
+        job = self.complete_job(job_id, summarize(result) if summarize else {})
+        return job, result
+
     def list_audit_logs(self, organization_id: str) -> list[AuditLog]:
         return sorted(
             [log for log in self.audit_logs if log.organization_id == organization_id],
@@ -1523,6 +1678,12 @@ class DataStore:
                 metadata=metadata or {},
             )
         )
+
+    def _job_changed(self, job: BackgroundJob) -> None:
+        return None
+
+    def _job_log_added(self, log: BackgroundJobLog) -> None:
+        return None
 
     def _memory_id_for_draft(self, draft: Draft) -> str:
         return f"mem_{draft.id}"
