@@ -32,6 +32,7 @@ from app.schemas import (
     DraftStatus,
     DraftUpdate,
     JobKind,
+    KnowledgeReadiness,
     LinkedInIntegration,
     LinkedInIntegrationUpdate,
     ModelCallLog,
@@ -580,6 +581,20 @@ def list_sources(
     try:
         actor_from_optional_auth(organization_id, authorization)
         return store.list_sources(organization_id)
+    except AuthenticationError as error:
+        raise authentication_failed(error) from error
+    except NotFoundError as error:
+        raise not_found(error) from error
+
+
+@app.get("/organizations/{organization_id}/knowledge-readiness", response_model=KnowledgeReadiness)
+def knowledge_readiness(
+    organization_id: str,
+    authorization: str | None = Header(default=None),
+) -> KnowledgeReadiness:
+    try:
+        actor_from_optional_auth(organization_id, authorization)
+        return store.knowledge_readiness(organization_id)
     except AuthenticationError as error:
         raise authentication_failed(error) from error
     except NotFoundError as error:

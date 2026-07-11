@@ -13,8 +13,8 @@ class PlatformIndependentBriefBuilder:
         opportunity: ContentOpportunity,
         chunks: list[SourceChunk],
     ) -> ContentBrief:
-        evidence = [chunk for chunk in chunks if chunk.source_id in opportunity.source_ids][:4]
-        supporting_points = [summarize(chunk.chunk_text, 170) for chunk in evidence]
+        evidence = self._evidence_for_opportunity(opportunity, chunks)
+        supporting_points = [summarize(chunk.chunk_text, 320) for chunk in evidence]
         claims = extract_claim_candidates(" ".join(supporting_points))[:5]
         risks = self._risks(profile, opportunity, supporting_points)
         do_not_say = self._do_not_say(profile)
@@ -59,6 +59,21 @@ class PlatformIndependentBriefBuilder:
             do_not_say.append("Do not invent metrics, customer names, partnerships, or launch details.")
         return do_not_say
 
+    def _evidence_for_opportunity(
+        self,
+        opportunity: ContentOpportunity,
+        chunks: list[SourceChunk],
+    ) -> list[SourceChunk]:
+        selected = [chunk for chunk in chunks if chunk.source_id in opportunity.source_ids]
+        preferred_ids = opportunity.metadata.get("evidence_chunk_ids")
+        if not isinstance(preferred_ids, list) or not preferred_ids:
+            return selected[:4]
+        preferred_order = {str(chunk_id): index for index, chunk_id in enumerate(preferred_ids)}
+        return sorted(
+            selected,
+            key=lambda chunk: (preferred_order.get(chunk.id, 10_000), chunk.source_id, chunk.chunk_index),
+        )[:4]
+
 
 def build_brief(profile: CompanyProfile, opportunity: ContentOpportunity, chunks: list[SourceChunk]) -> ContentBrief:
     return PlatformIndependentBriefBuilder().build(profile, opportunity, chunks)
@@ -68,7 +83,13 @@ def summarize(text: str, max_chars: int) -> str:
     from app.intelligence import normalize_text
 
     clean = normalize_text(text.replace("#", ""))
-    return clean if len(clean) <= max_chars else clean[: max_chars - 1].rstrip() + "..."
+    if len(clean) <= max_chars:
+        return clean
+    window = clean[: max_chars - 1].rstrip()
+    sentence_end = max(window.rfind("."), window.rfind("?"), window.rfind("!"))
+    if sentence_end >= int(max_chars * 0.45):
+        return window[: sentence_end + 1]
+    return window.rsplit(" ", 1)[0].rstrip(" ,;:") + "."
 
 
 def extract_claim_candidates(text: str) -> list[str]:

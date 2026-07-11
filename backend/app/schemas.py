@@ -515,6 +515,36 @@ class SourceDetail(BaseModel):
     audit_logs: list["AuditLog"] = Field(default_factory=list)
 
 
+class KnowledgeReadinessSignal(BaseModel):
+    key: str
+    label: str
+    score: float = Field(ge=0.0, le=1.0)
+    status: str
+    detail: str
+
+
+class KnowledgeReadinessRecommendation(BaseModel):
+    title: str
+    detail: str
+    action: str
+    priority: str = "medium"
+
+
+class KnowledgeReadiness(BaseModel):
+    organization_id: str
+    overall_score: float = Field(ge=0.0, le=1.0)
+    status: str
+    profile_completeness: float = Field(ge=0.0, le=1.0)
+    approved_source_count: int = 0
+    stale_source_count: int = 0
+    covered_pillar_count: int = 0
+    total_pillar_count: int = 0
+    retrievable_chunk_count: int = 0
+    signals: list[KnowledgeReadinessSignal] = Field(default_factory=list)
+    recommendations: list[KnowledgeReadinessRecommendation] = Field(default_factory=list)
+    generated_at: datetime = Field(default_factory=now_utc)
+
+
 class SourceDocument(BaseModel):
     id: str = Field(default_factory=lambda: new_id("doc"))
     source_id: str

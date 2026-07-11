@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 from app.contracts import DraftVariant, RenderedDraft
 from app.prompt_registry import prompt_versions
 from app.schemas import CompanyProfile, ContentBrief, ContentOpportunity, DraftGenerationSpec
@@ -39,9 +41,9 @@ class LinkedInCompanyPostAdapter:
 
     def variants(self) -> list[DraftVariant]:
         return [
-            DraftVariant("Build what matters starts with knowing what is true.", "practical"),
-            DraftVariant("Useful company content should come from real work.", "reflective"),
-            DraftVariant("Publishing more is not the same as communicating better.", "direct"),
+            DraftVariant("Lead with the operational insight.", "practical"),
+            DraftVariant("Lead with the human problem.", "reflective"),
+            DraftVariant("Lead with the clear takeaway.", "direct"),
         ]
 
     def render(
@@ -51,40 +53,43 @@ class LinkedInCompanyPostAdapter:
         brief: ContentBrief,
         opportunity: ContentOpportunity,
     ) -> RenderedDraft:
-        proof = brief.supporting_points[0] if brief.supporting_points else opportunity.summary
+        supporting = brief.supporting_points or [opportunity.summary]
+        proof = clean_public_sentence(supporting[0], 280)
+        second_proof = clean_public_sentence(supporting[1], 220) if len(supporting) > 1 else ""
+        key_message = clean_key_message(brief.key_message)
+        topic_label = public_topic_label(brief.key_message)
+        audience = concise_audience(brief.audience or profile.audience)
+        preferred_clean = clean_preferred_phrase(profile.preferred_phrases[0] if profile.preferred_phrases else "")
         company_line = (
             profile.one_liner
             or profile.product_summary
-            or "The company is turning approved knowledge into clearer public communication."
+            or "We are focused on turning real operating knowledge into useful public communication."
         )
-        voice_line = "The useful path is controlled context, source visibility, and human approval before anything goes public."
         if variant.style == "reflective":
-            middle = (
-                "AI can make drafts faster, but trust still depends on the quality of the context "
-                "and the judgment around what is worth saying."
-            )
+            hook = f"{audience.capitalize()} do not need another vague update. They need a useful operating signal."
+            angle = f"The signal here is about {topic_label.lower()}."
         elif variant.style == "direct":
-            middle = (
-                "A strong communication system should decide what is true, safe, relevant, and supported "
-                "before it decides how to format the post."
-            )
+            hook = direct_hook(topic_label, preferred_clean)
+            angle = f"This matters for {audience} because the evidence points to a concrete operating decision, not a broad claim."
         else:
-            middle = (
-                "For builders and small teams, the hard part is turning real work into clear public proof "
-                "without drifting into generic AI content."
-            )
+            hook = practical_hook(topic_label, preferred_clean)
+            angle = f"For {audience}, that lesson becomes useful when it is specific enough to act on."
 
-        preferred = profile.preferred_phrases[0] if profile.preferred_phrases else "production-ready products"
-        body = (
-            f"{variant.hook}\n\n"
-            f"{middle}\n\n"
-            f"{company_line}\n\n"
-            f"This connects to a simple principle: {preferred}. {voice_line}\n\n"
-            f"Source-backed note: {proof}\n\n"
-            f"That is the message behind this brief: {brief.key_message}. "
-            "Specific, grounded, and easier for a human to approve."
-        )
-        return RenderedDraft(body=body[:1500], hook=variant.hook, hashtags=["#AI", "#ProductBuilding", "#BuilderFirst"])
+        paragraphs = [
+            hook,
+            angle,
+            company_line,
+            f"The useful detail: {proof}",
+        ]
+        if second_proof and second_proof != proof:
+            paragraphs.append(f"Another detail matters: {second_proof}")
+        if preferred_clean:
+            paragraphs.append(f"The takeaway: stay focused on {preferred_clean}, and keep the story grounded in what the organization can actually support.")
+        else:
+            paragraphs.append("The takeaway: keep the story narrow, useful, and grounded in what the organization can actually support.")
+
+        body = "\n\n".join(paragraphs)
+        return RenderedDraft(body=body[:1500], hook=hook, hashtags=linkedin_hashtags(profile, brief))
 
     def quality_checks(self, body: str, profile: CompanyProfile, brief: ContentBrief) -> list[str]:
         checks: list[str] = []
@@ -112,6 +117,130 @@ def has_unsupported_metric(body: str, brief: ContentBrief) -> bool:
         return False
     approved_context = " ".join([*brief.claims, *brief.supporting_points]).lower()
     return not any(marker in approved_context for marker in metric_markers)
+
+
+def clean_public_sentence(text: str, max_chars: int) -> str:
+    clean = re.sub(r"\s+", " ", text.replace("#", "")).replace("...", ".").strip()
+    clean = re.sub(r"^(source-backed note|approved note|note|source):\s*", "", clean, flags=re.IGNORECASE)
+    clean = re.sub(r"^Quainy Context\s+", "", clean, flags=re.IGNORECASE)
+    clean = re.sub(
+        r"^Quainy (?:Core Context|Labs Source|Public Communication Rules|Vouch Product Source)\s+",
+        "",
+        clean,
+        flags=re.IGNORECASE,
+    )
+    clean = re.sub(r"^Quainy Active Products And Website\s+", "", clean, flags=re.IGNORECASE)
+    clean = re.sub(r"^Published Blog Today:\s*", "", clean, flags=re.IGNORECASE)
+    clean = re.sub(r"^Use this file as the shared source of context.+?(?=Quainy|The product|Python|AI Engineering)", "", clean, flags=re.IGNORECASE)
+    if len(clean) <= max_chars:
+        return clean.rstrip(".") + "."
+    window = clean[: max_chars - 1].rstrip()
+    sentence_end = max(window.rfind("."), window.rfind("?"), window.rfind("!"))
+    if sentence_end >= int(max_chars * 0.45):
+        return window[: sentence_end + 1]
+    trimmed = window.rsplit(" ", 1)[0].rstrip(" ,;:")
+    return trimmed.rstrip(".") + "."
+
+
+def clean_key_message(text: str) -> str:
+    clean = re.sub(r"\s+", " ", text).strip()
+    clean = re.sub(r"^Turn\s+(.+?)\s+into\s+a\s+source-backed\s+update$", r"Share the useful lesson from \1", clean, flags=re.IGNORECASE)
+    clean = re.sub(r"^Explain\s+what\s+(.+?)\s+shows\s+about\s+", r"What \1 shows about ", clean, flags=re.IGNORECASE)
+    clean = re.sub(r"^Share\s+a\s+practical\s+point\s+of\s+view\s+on\s+(.+)$", r"What the approved context shows about \1", clean, flags=re.IGNORECASE)
+    return clean[:180].rstrip(" .") or "Share one useful lesson from approved company context"
+
+
+def public_topic_label(text: str) -> str:
+    clean = re.sub(r"\s+", " ", text).strip(" .")
+    patterns = [
+        r"^Share\s+a\s+practical\s+point\s+of\s+view\s+on\s+(.+)$",
+        r"^Explain\s+what\s+.+?\s+shows\s+about\s+(.+)$",
+        r"^What\s+.+?\s+shows\s+about\s+(.+)$",
+    ]
+    for pattern in patterns:
+        match = re.match(pattern, clean, flags=re.IGNORECASE)
+        if match:
+            return match.group(1).strip(" .").lower()
+    return clean[:80].strip(" .").lower() or "the operating lesson"
+
+
+def practical_hook(topic_label: str, preferred: str) -> str:
+    topic = topic_label.lower()
+    if "lab" in topic and "proof" in topic:
+        return "Learning becomes more credible when it leaves behind public proof."
+    if "production" in topic and "readiness" in topic:
+        return "A demo is a beginning. Production readiness is where the real building starts."
+    if "product judgment" in topic:
+        return "AI can speed up building, but product judgment decides what is worth building."
+    if "first-principles" in topic or "first principles" in topic:
+        return "First-principles learning helps builders understand the system, not just follow steps."
+    if "ai engineering" in topic:
+        return "Useful AI engineering starts with the workflow, not the model."
+    if "adherence" in topic:
+        return "Patient adherence is not only about reminders. It depends on clear follow-up between visits."
+    if "remote" in topic and "monitoring" in topic:
+        return "Remote patient monitoring works best when review and follow-up are easy to act on."
+    if preferred.lower() == "build what matters":
+        return "Build what matters is only useful when it turns into visible proof."
+    if preferred.lower() == "ship what works":
+        return "Ship what works means taking the idea past the demo."
+    if preferred:
+        return f"{preferred.capitalize()} works best when the idea becomes specific enough to build."
+    return f"{topic_label.capitalize()} works best when the idea becomes specific enough to build."
+
+
+def direct_hook(topic_label: str, preferred: str) -> str:
+    topic = topic_label.lower()
+    if "lab" in topic and "proof" in topic:
+        return "Quainy Labs should show the work, not just describe the philosophy."
+    if "production" in topic and "readiness" in topic:
+        return "Production readiness is the difference between a promising demo and a useful product."
+    if "product judgment" in topic:
+        return "Product judgment is what keeps AI leverage pointed at real problems."
+    if "first-principles" in topic or "first principles" in topic:
+        return "First-principles learning gives builders ownership of their decisions."
+    if "ai engineering" in topic:
+        return "AI engineering is strongest when it is grounded in real workflows."
+    if "adherence" in topic:
+        return "Patient adherence needs an owner, a status, and a next step."
+    if "remote" in topic and "monitoring" in topic:
+        return "Remote monitoring is only useful when teams can act on the signal."
+    if preferred:
+        return f"{preferred.capitalize()}: make the next step visible."
+    return f"{topic_label.capitalize()}: make the next step visible."
+
+
+def concise_audience(audience: str | None) -> str:
+    clean = re.sub(r"\s+", " ", audience or "").strip(" .")
+    if not clean:
+        return "the people this serves"
+    if len(clean) <= 90:
+        return clean
+    if " who " in clean[:120]:
+        return clean[: clean.index(" who ")].rstrip(" ,;:")
+    return clean[:90].rsplit(" ", 1)[0].rstrip(" ,;:")
+
+
+def clean_preferred_phrase(phrase: str) -> str:
+    return re.sub(r"\s+", " ", phrase or "").strip(" .")
+
+
+def linkedin_hashtags(profile: CompanyProfile, brief: ContentBrief) -> list[str]:
+    terms: list[str] = []
+    for phrase in [*profile.content_pillars, brief.key_message]:
+        for word in re.findall(r"[A-Za-z][A-Za-z0-9]+", phrase.title().replace("-", " ")):
+            if len(word) >= 4 and word.lower() not in {"share", "practical", "point", "view", "explain", "what", "about"}:
+                terms.append(word)
+            if len(terms) >= 3:
+                break
+        if len(terms) >= 3:
+            break
+    hashtags = []
+    for term in terms:
+        tag = f"#{term[:32]}"
+        if tag not in hashtags:
+            hashtags.append(tag)
+    return hashtags or ["#CompanyBuilding", "#Operations", "#Leadership"]
 
 
 class BlogOutlineAdapter:

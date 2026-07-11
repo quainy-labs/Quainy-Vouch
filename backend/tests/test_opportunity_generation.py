@@ -3,8 +3,8 @@ from datetime import datetime, timedelta, timezone
 from fastapi.testclient import TestClient
 
 from app.main import app
-from app.opportunities import FreshnessScorer, RelevanceScorer
-from app.schemas import CompanyProfile, PostMemory, Source, SourceChunk
+from app.opportunities import FreshnessScorer, OpportunityGenerator, RelevanceScorer
+from app.schemas import CalendarEvent, CompanyProfile, PostMemory, Source, SourceChunk, TrendSignal
 
 
 client = TestClient(app)
@@ -42,6 +42,9 @@ def test_opportunity_generation_returns_source_backed_reasons_and_scores():
     assert opportunity["relevance_score"] > 0.5
     assert opportunity["freshness_score"] > 0.5
     assert opportunity["confidence_score"] > 0.5
+    assert "rank_signals" in opportunity["metadata"]
+    assert opportunity["metadata"]["rank_signals"]["source_support"] > 0
+    assert opportunity["metadata"]["rank_signals"]["rank_score"] > 0
 
 
 def test_opportunity_generation_refuses_thin_context():
@@ -132,6 +135,95 @@ def test_relevance_scorer_uses_performance_as_capped_signal():
 
     assert performance_score > baseline_score
     assert performance_score - baseline_score <= 0.041
+
+
+def test_opportunity_ranking_uses_calendar_trends_and_performance_context():
+    now = datetime.now(timezone.utc)
+    generator = OpportunityGenerator()
+    profile = CompanyProfile(
+        organization_id="org_rank",
+        audience="builders and education teams",
+        voice_rules=["Concrete and source-backed"],
+        content_pillars=["AI education", "billing operations"],
+    )
+    ai_source = Source(
+        id="src_ai",
+        organization_id="org_rank",
+        source_type="text",
+        title="AI education source",
+        approval_status="approved",
+        last_ingested_at=now,
+        updated_at=now,
+    )
+    billing_source = Source(
+        id="src_billing",
+        organization_id="org_rank",
+        source_type="text",
+        title="Billing operations source",
+        approval_status="approved",
+        last_ingested_at=now,
+        updated_at=now,
+    )
+    chunks = [
+        SourceChunk(
+            source_id=ai_source.id,
+            organization_id="org_rank",
+            chunk_text=(
+                "AI education helps builders and education teams understand approved source-backed product judgment. "
+                "Teams use concrete examples, human review, and trusted evidence before public communication. "
+            )
+            * 3,
+            chunk_index=0,
+        ),
+        SourceChunk(
+            source_id=billing_source.id,
+            organization_id="org_rank",
+            chunk_text=(
+                "Billing operations teams coordinate invoices, account status, payment review, and renewal workflows. "
+                "The approved source explains finance handoffs and customer account hygiene. "
+            )
+            * 3,
+            chunk_index=0,
+        ),
+    ]
+    memory = [
+        PostMemory(
+            organization_id="org_rank",
+            platform="linkedin",
+            content_type="company_post",
+            final_body="AI education post for builders with source-backed examples performed well.",
+            source_draft_id="draft_rank",
+            topic_labels=["ai", "education", "builders"],
+            idea_fingerprint="ai education builders source-backed",
+            performance_snapshot={"performance_score": 0.92},
+        )
+    ]
+    event = CalendarEvent(
+        organization_id="org_rank",
+        title="AI Education Week",
+        event_date=now,
+        event_type="public",
+        description="Public event about AI education for builders.",
+        relevance_terms=["ai", "education", "builders"],
+    )
+    trend = TrendSignal(
+        organization_id="org_rank",
+        title="AI education demand",
+        summary="Builders are looking for source-backed AI education.",
+        industry="AI education",
+        relevance_terms=["ai", "education", "source-backed"],
+    )
+
+    opportunities = generator.generate(profile, [ai_source, billing_source], chunks, memory, [event], [trend])
+
+    assert opportunities
+    assert opportunities[0].source_ids == [ai_source.id]
+    signals = opportunities[0].metadata["rank_signals"]
+    assert signals["date_relevance"] > 0
+    assert signals["trend_relevance"] > 0
+    assert signals["performance_fit"] > 0
+    assert "Calendar context also points to AI Education Week." in opportunities[0].reason_today
+    assert "Trend research also points to AI education demand." in opportunities[0].reason_today
 
 
 def test_freshness_scorer_flags_stale_sources():

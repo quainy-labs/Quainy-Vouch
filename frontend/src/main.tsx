@@ -83,6 +83,36 @@ type SourceDetail = {
   audit_logs: AuditLog[];
 };
 
+type KnowledgeReadinessSignal = {
+  key: string;
+  label: string;
+  score: number;
+  status: string;
+  detail: string;
+};
+
+type KnowledgeReadinessRecommendation = {
+  title: string;
+  detail: string;
+  action: string;
+  priority: string;
+};
+
+type KnowledgeReadiness = {
+  organization_id: string;
+  overall_score: number;
+  status: "blocked" | "building" | "ready" | "strong";
+  profile_completeness: number;
+  approved_source_count: number;
+  stale_source_count: number;
+  covered_pillar_count: number;
+  total_pillar_count: number;
+  retrievable_chunk_count: number;
+  signals: KnowledgeReadinessSignal[];
+  recommendations: KnowledgeReadinessRecommendation[];
+  generated_at: string;
+};
+
 type Opportunity = {
   id: string;
   title: string;
@@ -961,6 +991,7 @@ function App() {
   const [scheduleFor, setScheduleFor] = useState("");
   const [calendarItems, setCalendarItems] = useState<Draft[]>([]);
   const [linkedinIntegration, setLinkedinIntegration] = useState<LinkedInIntegration | null>(null);
+  const [knowledgeReadiness, setKnowledgeReadiness] = useState<KnowledgeReadiness | null>(null);
   const [memoryItems, setMemoryItems] = useState<PostMemory[]>([]);
   const [analyticsDashboard, setAnalyticsDashboard] = useState<AnalyticsDashboard | null>(null);
   const [contentArtifacts, setContentArtifacts] = useState<ContentArtifact[]>([]);
@@ -1009,11 +1040,12 @@ function App() {
       await Promise.allSettled([
         api<Draft[]>(`/organizations/${data.organization.id}/calendar`).then(setCalendarItems),
         api<LinkedInIntegration>(`/organizations/${data.organization.id}/linkedin-integration`).then(setLinkedinIntegration),
+        api<KnowledgeReadiness>(`/organizations/${data.organization.id}/knowledge-readiness`).then(setKnowledgeReadiness),
         api<PostMemory[]>(`/organizations/${data.organization.id}/memory`).then((memory) => {
-        setMemoryItems(memory);
-        if (memory.length > 0) {
-          setMetricsForm((current) => ({ ...current, memory_id: memory[0].id }));
-        }
+          setMemoryItems(memory);
+          if (memory.length > 0) {
+            setMetricsForm((current) => ({ ...current, memory_id: memory[0].id }));
+          }
         }),
         api<AnalyticsDashboard>(`/organizations/${data.organization.id}/analytics`).then(setAnalyticsDashboard),
         api<ContentArtifact[]>(`/organizations/${data.organization.id}/content-artifacts`).then(setContentArtifacts),
@@ -1073,6 +1105,11 @@ function App() {
     ]);
   }
 
+  async function refreshKnowledgeReadiness(organizationId = bootstrap?.organization.id) {
+    if (!organizationId) return;
+    setKnowledgeReadiness(await api<KnowledgeReadiness>(`/organizations/${organizationId}/knowledge-readiness`));
+  }
+
   async function refreshJobs(organizationId = bootstrap?.organization.id) {
     if (!organizationId) return;
     setJobs(await api<BackgroundJob[]>(`/organizations/${organizationId}/jobs`));
@@ -1106,9 +1143,10 @@ function App() {
 
   const healthLabel = useMemo(() => {
     if (!bootstrap) return "Loading";
+    if (knowledgeReadiness) return `${Math.round(knowledgeReadiness.overall_score * 100)}% knowledge ready`;
     const approvedCount = bootstrap.sources.filter((source) => source.approval_status === "approved").length;
     return `${approvedCount} approved sources`;
-  }, [bootstrap]);
+  }, [bootstrap, knowledgeReadiness]);
 
   const currentRole = currentUser?.role ?? "viewer";
   const canManageWorkspace = currentRole === "owner";
@@ -1275,6 +1313,17 @@ function App() {
       source_type: "notion_page",
     },
   ];
+  const readinessCopy: Record<string, string> = {
+    strong: "Strong evidence base. Recommendations can lean on profile, sources, and retrieval.",
+    ready: "Ready for generation. Add more context over time to improve ranking accuracy.",
+    building: "Usable, but still missing context that would make suggestions sharper.",
+    blocked: "Needs approved company context before reliable opportunities and drafts.",
+  };
+  const readinessPriorityLabel: Record<string, string> = {
+    high: "High",
+    medium: "Medium",
+    low: "Low",
+  };
   const selectedSourceGuide = sourceGuideCards.find((guide) => guide.source_type === sourceForm.source_type) ?? sourceGuideCards[1];
   const sourceTypeText: Record<
     string,
@@ -1584,6 +1633,7 @@ function App() {
       await Promise.allSettled([
         api<Draft[]>(`/organizations/${response.workspace.organization.id}/calendar`).then(setCalendarItems),
         api<LinkedInIntegration>(`/organizations/${response.workspace.organization.id}/linkedin-integration`).then(setLinkedinIntegration),
+        api<KnowledgeReadiness>(`/organizations/${response.workspace.organization.id}/knowledge-readiness`).then(setKnowledgeReadiness),
         api<PostMemory[]>(`/organizations/${response.workspace.organization.id}/memory`).then(setMemoryItems),
         api<AnalyticsDashboard>(`/organizations/${response.workspace.organization.id}/analytics`).then(setAnalyticsDashboard),
         api<ContentArtifact[]>(`/organizations/${response.workspace.organization.id}/content-artifacts`).then(setContentArtifacts),
@@ -1808,6 +1858,7 @@ function App() {
       setSelectedBrief(null);
       setDrafts([]);
       setSelectedDraft(null);
+      await refreshKnowledgeReadiness(bootstrap.organization.id);
       await refreshCurrentWorkspaceState();
       setSetupErrors([]);
       setNotice("Workspace and voice profile saved.");
@@ -1823,6 +1874,7 @@ function App() {
     if (!bootstrap) return;
     const sources = await api<Source[]>(`/organizations/${bootstrap.organization.id}/sources`);
     setBootstrap({ ...bootstrap, sources });
+    await refreshKnowledgeReadiness(bootstrap.organization.id);
     if (selectedId) {
       setSelectedSourceId(selectedId);
       setSourceDetail(await api<SourceDetail>(`/sources/${selectedId}`));
@@ -1923,6 +1975,19 @@ function App() {
     } finally {
       setBusy(false);
     }
+  }
+
+  async function handleReadinessAction(action: string) {
+    if (action === "settings") {
+      setActiveView("settings");
+      return;
+    }
+    if (action === "refresh_sources") {
+      setActiveView("sources");
+      setNotice("Select a stale source and refresh it after confirming the source is still current.");
+      return;
+    }
+    setActiveView("sources");
   }
 
   async function handleSourceFile(file: File | undefined) {
@@ -3157,6 +3222,51 @@ function App() {
               </button>
             </div>
             <ErrorList errors={sourceErrors} />
+            {knowledgeReadiness && (
+              <div className={`readiness-panel ${knowledgeReadiness.status}`}>
+                <div className="readiness-score">
+                  <span>Knowledge readiness</span>
+                  <strong>{Math.round(knowledgeReadiness.overall_score * 100)}%</strong>
+                  <p>{readinessCopy[knowledgeReadiness.status] ?? readinessCopy.building}</p>
+                </div>
+                <div className="readiness-signals">
+                  {knowledgeReadiness.signals.map((signal) => (
+                    <article className={`readiness-signal ${signal.status}`} key={signal.key}>
+                      <div>
+                        <span>{signal.label}</span>
+                        <strong>{Math.round(signal.score * 100)}%</strong>
+                      </div>
+                      <div className="readiness-meter" aria-hidden="true">
+                        <span style={{ width: `${Math.round(signal.score * 100)}%` }} />
+                      </div>
+                      <p>{signal.detail}</p>
+                    </article>
+                  ))}
+                </div>
+                {knowledgeReadiness.recommendations.length > 0 && (
+                  <div className="readiness-recommendations">
+                    {knowledgeReadiness.recommendations.map((recommendation) => (
+                      <article key={`${recommendation.action}-${recommendation.title}`}>
+                        <span>{readinessPriorityLabel[recommendation.priority] ?? "Medium"} priority</span>
+                        <strong>{recommendation.title}</strong>
+                        <p>{recommendation.detail}</p>
+                        <button
+                          className="text-button"
+                          onClick={() => void handleReadinessAction(recommendation.action)}
+                          type="button"
+                        >
+                          {recommendation.action === "settings"
+                            ? "Open settings"
+                            : recommendation.action === "refresh_sources"
+                              ? "Review sources"
+                              : "Add sources"}
+                        </button>
+                      </article>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
             <div className="source-health-grid">
               <article className={`source-health-tile ${approvedSources.length > 0 ? "healthy" : "blocked"}`}>
                 <span>Approved</span>

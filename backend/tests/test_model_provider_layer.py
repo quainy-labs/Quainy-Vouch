@@ -29,6 +29,40 @@ class InvalidStructuredProvider:
         )
 
 
+class OpportunityStructuredProvider:
+    provider_name = "model-test-provider"
+    model = "specific-opportunity-v1"
+
+    def generate_structured(
+        self,
+        prompt: str,
+        schema_name: str,
+        json_schema: dict[str, Any] | None = None,
+    ) -> ModelProviderResult:
+        if schema_name == "OpportunityRecommendationSet":
+            return ModelProviderResult(
+                provider=self.provider_name,
+                model=self.model,
+                output={
+                    "recommendations": [
+                        {
+                            "title": "Announce the new Product Judgment in the AI Era blog",
+                            "summary": "The organization has a fresh product judgment blog that explains how builders decide what is worth building with AI.",
+                            "why_now": "The blog was published today and is the most timely public proof artifact.",
+                            "confidence": 0.91,
+                        }
+                    ]
+                },
+                token_usage={"total_tokens": 12},
+            )
+        return ModelProviderResult(
+            provider=self.provider_name,
+            model=self.model,
+            output={"recommendations": []},
+            token_usage={"total_tokens": 4},
+        )
+
+
 def create_context_org(name: str) -> dict:
     org = client.post("/organizations", json={"name": name}).json()
     client.patch(
@@ -89,3 +123,39 @@ def test_invalid_structured_model_output_fails_safe_and_is_logged():
     assert draft["body"]
     assert any(call["status"] == "failed" and call["provider"] == "invalid-test-provider" for call in calls)
     assert all(call["prompt_hash"] for call in calls)
+
+
+def test_grounded_model_recommendation_becomes_top_opportunity():
+    org = client.post("/organizations", json={"name": "Specific Model Opportunity Org"}).json()
+    client.patch(
+        f"/organizations/{org['id']}/profile",
+        json={
+            "audience": "AI builders and founders",
+            "content_pillars": ["product judgment", "AI building"],
+        },
+    ).raise_for_status()
+    client.post(
+        f"/organizations/{org['id']}/sources",
+        json={
+            "source_type": "manual_note",
+            "title": "Published blog today",
+            "raw_text": (
+                "The organization published Product Judgment in the AI Era today. "
+                "The blog explains how builders decide what is worth building, who it should serve, "
+                "what promise to make, and how to use AI without losing product sense. "
+            )
+            * 4,
+            "approval_status": "approved",
+        },
+    ).raise_for_status()
+    original_provider = store.model_provider
+    store.model_provider = OpportunityStructuredProvider()
+    try:
+        opportunities = client.post(f"/organizations/{org['id']}/opportunities/generate").json()["opportunities"]
+    finally:
+        store.model_provider = original_provider
+
+    assert opportunities[0]["title"] == "Announce the new Product Judgment in the AI Era blog"
+    assert opportunities[0]["metadata"]["generation_basis"] == "model_recommendation"
+    assert opportunities[0]["metadata"]["model_provider"] == "model-test-provider"
+    assert "published today" in opportunities[0]["reason_today"].lower()

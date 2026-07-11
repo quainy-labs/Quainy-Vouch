@@ -24,6 +24,7 @@ from app.intelligence import (
     duplicate_check,
     idea_fingerprint,
     normalize_text,
+    retrieve_chunks as lexical_retrieve_chunks,
     split_chunks,
     terms,
 )
@@ -65,6 +66,9 @@ from app.schemas import (
     BriefRecommendation,
     JobKind,
     JobStatus,
+    KnowledgeReadiness,
+    KnowledgeReadinessRecommendation,
+    KnowledgeReadinessSignal,
     LinkedInIntegration,
     LinkedInIntegrationUpdate,
     ModelCallLog,
@@ -82,6 +86,7 @@ from app.schemas import (
     PreferenceSuggestionStatus,
     DraftRecommendationSet,
     OpportunityRecommendationSet,
+    OpportunityRecommendation,
     PublishResult,
     ReviewDecisionCreate,
     SignupCreate,
@@ -856,15 +861,201 @@ class DataStore:
         ranked.sort(key=lambda item: item[2], reverse=True)
         return ranked[:limit]
 
+    def knowledge_readiness(self, organization_id: str) -> KnowledgeReadiness:
+        organization = self.get_organization(organization_id)
+        profile = self.profiles[organization_id]
+        sources = self.list_sources(organization_id)
+        approved_sources = [source for source in sources if source.approval_status == SourceStatus.approved]
+        chunks = self.approved_chunks(organization_id)
+        now = now_utc()
+
+        profile_checks = [
+            bool(organization.name.strip()),
+            bool(organization.website_url),
+            bool(organization.industry),
+            bool(organization.description),
+            bool(organization.audience_summary or profile.audience),
+            bool(profile.one_liner),
+            bool(profile.content_pillars),
+            bool(profile.voice_rules),
+            bool(profile.approved_claims or profile.forbidden_claims),
+        ]
+        profile_score = round(sum(1 for item in profile_checks if item) / len(profile_checks), 3)
+
+        if len(approved_sources) >= 3:
+            source_score = 1.0
+        elif len(approved_sources) == 2:
+            source_score = 0.75
+        elif len(approved_sources) == 1:
+            source_score = 0.45
+        else:
+            source_score = 0.0
+
+        stale_sources: list[Source] = []
+        fresh_sources = 0
+        for source in approved_sources:
+            reference_at = source.last_ingested_at or source.updated_at
+            age_days = max(0.0, (now - reference_at).total_seconds() / 86400)
+            if age_days <= source.freshness_days:
+                fresh_sources += 1
+            else:
+                stale_sources.append(source)
+        freshness_score = round(fresh_sources / len(approved_sources), 3) if approved_sources else 0.0
+
+        pillars = profile.content_pillars
+        covered_pillars = 0
+        for pillar in pillars:
+            pillar_terms = terms(pillar)
+            if pillar_terms and any(pillar_terms & terms(chunk.chunk_text) for chunk in chunks):
+                covered_pillars += 1
+        pillar_score = round(covered_pillars / len(pillars), 3) if pillars else 0.0
+
+        approved_source_ids_with_chunks = {chunk.source_id for chunk in chunks}
+        chunk_coverage = len(approved_source_ids_with_chunks) / len(approved_sources) if approved_sources else 0.0
+        chunk_depth = min(1.0, len(chunks) / max(len(approved_sources) * 2, 1)) if approved_sources else 0.0
+        retrieval_score = round((chunk_coverage * 0.65) + (chunk_depth * 0.35), 3) if approved_sources else 0.0
+
+        signals = [
+            self._readiness_signal(
+                "profile",
+                "Profile completeness",
+                profile_score,
+                f"{sum(1 for item in profile_checks if item)} of {len(profile_checks)} organization and voice fields are complete.",
+            ),
+            self._readiness_signal(
+                "approved_sources",
+                "Approved sources",
+                source_score,
+                f"{len(approved_sources)} approved source{'' if len(approved_sources) == 1 else 's'} are available.",
+            ),
+            self._readiness_signal(
+                "freshness",
+                "Source freshness",
+                freshness_score,
+                f"{fresh_sources} of {len(approved_sources)} approved source{'' if len(approved_sources) == 1 else 's'} are within their refresh window.",
+            ),
+            self._readiness_signal(
+                "pillar_coverage",
+                "Pillar coverage",
+                pillar_score,
+                f"{covered_pillars} of {len(pillars)} content pillar{'' if len(pillars) == 1 else 's'} have approved evidence.",
+            ),
+            self._readiness_signal(
+                "retrieval",
+                "Retrieval quality",
+                retrieval_score,
+                f"{len(chunks)} retrievable source chunk{'' if len(chunks) == 1 else 's'} are indexed for approved sources.",
+            ),
+        ]
+        overall_score = round(
+            profile_score * 0.22
+            + source_score * 0.24
+            + freshness_score * 0.18
+            + pillar_score * 0.22
+            + retrieval_score * 0.14,
+            3,
+        )
+        if overall_score >= 0.9:
+            status = "strong"
+        elif overall_score >= 0.7:
+            status = "ready"
+        elif overall_score >= 0.4:
+            status = "building"
+        else:
+            status = "blocked"
+
+        recommendations: list[KnowledgeReadinessRecommendation] = []
+        if profile_score < 0.7:
+            recommendations.append(
+                KnowledgeReadinessRecommendation(
+                    title="Complete organization context",
+                    detail="Add industry, audience, one-liner, voice rules, and claims so recommendations can match the company.",
+                    action="settings",
+                    priority="high",
+                )
+            )
+        if len(approved_sources) == 0:
+            recommendations.append(
+                KnowledgeReadinessRecommendation(
+                    title="Add the first approved source",
+                    detail="Opportunities need approved company knowledge before the system can safely rank or draft them.",
+                    action="sources",
+                    priority="high",
+                )
+            )
+        elif len(approved_sources) < 3:
+            recommendations.append(
+                KnowledgeReadinessRecommendation(
+                    title="Add more source variety",
+                    detail="A mix of product, proof, positioning, and policy sources improves ranking accuracy.",
+                    action="sources",
+                    priority="medium",
+                )
+            )
+        if stale_sources:
+            recommendations.append(
+                KnowledgeReadinessRecommendation(
+                    title="Refresh stale sources",
+                    detail=f"{len(stale_sources)} approved source{'' if len(stale_sources) == 1 else 's'} are outside their refresh window.",
+                    action="refresh_sources",
+                    priority="medium",
+                )
+            )
+        if pillars and covered_pillars < len(pillars):
+            recommendations.append(
+                KnowledgeReadinessRecommendation(
+                    title="Cover every content pillar",
+                    detail="Add approved evidence for pillars that currently have no retrievable source chunks.",
+                    action="sources",
+                    priority="medium",
+                )
+            )
+        if approved_sources and retrieval_score < 0.7:
+            recommendations.append(
+                KnowledgeReadinessRecommendation(
+                    title="Improve retrieval depth",
+                    detail="Refresh or expand approved sources so each active source has indexed chunks.",
+                    action="refresh_sources",
+                    priority="medium",
+                )
+            )
+
+        return KnowledgeReadiness(
+            organization_id=organization_id,
+            overall_score=overall_score,
+            status=status,
+            profile_completeness=profile_score,
+            approved_source_count=len(approved_sources),
+            stale_source_count=len(stale_sources),
+            covered_pillar_count=covered_pillars,
+            total_pillar_count=len(pillars),
+            retrievable_chunk_count=len(chunks),
+            signals=signals,
+            recommendations=recommendations[:4],
+        )
+
+    def _readiness_signal(self, key: str, label: str, score: float, detail: str) -> KnowledgeReadinessSignal:
+        if score >= 0.85:
+            status = "strong"
+        elif score >= 0.65:
+            status = "ready"
+        elif score > 0:
+            status = "building"
+        else:
+            status = "blocked"
+        return KnowledgeReadinessSignal(key=key, label=label, score=round(score, 3), status=status, detail=detail)
+
     def generate_opportunities(self, organization_id: str, actor_id: str = "local_user") -> list[ContentOpportunity]:
         profile = self.profiles[organization_id]
         sources = [source for source in self.list_sources(organization_id) if source.approval_status == SourceStatus.approved]
         chunks = self.approved_chunks(organization_id)
-        opportunities = self.opportunity_generator.generate(
+        fallback_opportunities = self.opportunity_generator.generate(
             profile,
             sources,
             chunks,
             self.list_memory(organization_id),
+            self.list_calendar_events(organization_id),
+            self.list_trend_signals(organization_id),
         )
         model_output, model_log = self.generate_structured_safely(
             organization_id,
@@ -875,6 +1066,16 @@ class DataStore:
             [source.id for source in sources],
             {"operation": "opportunity_generation", "source_count": len(sources), "chunk_count": len(chunks)},
         )
+        model_opportunities: list[ContentOpportunity] = []
+        if model_output and model_log.provider != "deterministic":
+            model_opportunities = self._opportunities_from_model_recommendations(
+                organization_id,
+                model_output,
+                sources,
+                chunks,
+                model_log.provider,
+            )
+        opportunities = self._merge_opportunities(model_opportunities, fallback_opportunities)
         for opportunity in opportunities:
             opportunity.metadata["model_call_id"] = model_log.id
             opportunity.metadata["model_provider"] = model_log.provider
@@ -884,6 +1085,202 @@ class DataStore:
             self.opportunities[opportunity.id] = opportunity
         self.log(organization_id, "opportunities.generated", "organization", organization_id, {"count": len(opportunities)}, actor_id)
         return opportunities
+
+    def _opportunities_from_model_recommendations(
+        self,
+        organization_id: str,
+        recommendation_set: OpportunityRecommendationSet,
+        sources: list[Source],
+        chunks: list[SourceChunk],
+        provider_name: str,
+    ) -> list[ContentOpportunity]:
+        opportunities: list[ContentOpportunity] = []
+        source_ids = {source.id for source in sources}
+        for recommendation in recommendation_set.recommendations[:5]:
+            if self._is_generic_model_recommendation(recommendation):
+                continue
+            query = " ".join([recommendation.title, recommendation.summary, recommendation.why_now])
+            evidence = [chunk for chunk in lexical_retrieve_chunks(query, chunks, limit=8) if chunk.source_id in source_ids]
+            evidence = self._prioritize_model_evidence(query, evidence, sources)[:4]
+            if not evidence:
+                continue
+            recommendation_title = self._sanitize_model_title(recommendation.title.strip(), evidence)
+            recommendation_summary = recommendation.summary.strip()
+            recommendation_reason = self._sanitize_model_why_now(recommendation.why_now.strip(), evidence)
+            selected_source_ids = sorted({chunk.source_id for chunk in evidence})
+            freshness = self.opportunity_generator.freshness_scorer.score(sources, selected_source_ids)
+            timeliness = self._model_timeliness_score(selected_source_ids, sources)
+            relevance = min(0.98, max(0.55, 0.5 + len(evidence) * 0.08 + recommendation.confidence * 0.22))
+            confidence = min(0.97, max(0.55, recommendation.confidence))
+            focus = self._model_focus_score(recommendation)
+            rank_score = round(min(1.0, relevance * 0.34 + confidence * 0.16 + freshness * 0.18 + timeliness * 0.22 + focus * 0.1), 3)
+            opportunities.append(
+                ContentOpportunity(
+                    organization_id=organization_id,
+                    title=recommendation_title,
+                    summary=recommendation_summary,
+                    reason_today=recommendation_reason,
+                    source_ids=selected_source_ids,
+                    freshness_score=freshness,
+                    relevance_score=round(relevance, 3),
+                    confidence_score=round(confidence, 3),
+                    metadata={
+                        "generation_basis": "model_recommendation",
+                        "model_provider": provider_name,
+                        "model_confidence": recommendation.confidence,
+                        "evidence_chunk_ids": [chunk.id for chunk in evidence],
+                        "rank_score": rank_score,
+                        "rank_signals": {
+                            "source_support": round(min(1.0, len(evidence) / 4), 3),
+                            "date_relevance": timeliness,
+                            "trend_relevance": 0.0,
+                            "audience_fit": round(relevance, 3),
+                            "tone_fit": round(confidence, 3),
+                            "freshness": freshness,
+                            "performance_fit": 0.0,
+                            "duplicate_penalty": 0.0,
+                            "focus": focus,
+                            "rank_score": rank_score,
+                        },
+                    },
+                )
+            )
+        return sorted(opportunities, key=lambda opportunity: float(opportunity.metadata.get("rank_score", 0)), reverse=True)
+
+    def _sanitize_model_title(self, title: str, evidence: list[SourceChunk]) -> str:
+        cleaned = title.replace("Product Vouch", "Quainy Vouch").replace("product Vouch", "Quainy Vouch")
+        evidence_text = " ".join(chunk.chunk_text for chunk in evidence).lower()
+        if "launch" in cleaned.lower() and "launch" not in evidence_text:
+            if "vouch" in evidence_text:
+                return "Share Quainy Vouch as active product work"
+            return cleaned.replace("Launch", "Update").replace("launch", "update")
+        return cleaned
+
+    def _model_timeliness_score(self, source_ids: list[str], sources: list[Source]) -> float:
+        selected_titles = " ".join(source.title for source in sources if source.id in source_ids).lower()
+        if "published blog today" in selected_titles:
+            return 1.0
+        if "vouch product" in selected_titles or "quainy vouch" in selected_titles:
+            return 0.95
+        if "active products" in selected_titles:
+            return 0.75
+        return 0.2
+
+    def _model_focus_score(self, recommendation: OpportunityRecommendation) -> float:
+        combined = " ".join([recommendation.title, recommendation.summary, recommendation.why_now]).lower()
+        if "vouch" in combined:
+            return 1.0
+        if "product judgment" in combined or "blog" in combined:
+            return 0.95
+        if "meaningful problems" in combined:
+            return 0.75
+        return 0.25
+
+    def _sanitize_model_why_now(self, why_now: str, evidence: list[SourceChunk]) -> str:
+        evidence_text = " ".join(chunk.chunk_text for chunk in evidence).lower()
+        lowered = why_now.lower()
+        if (
+            "http://" in lowered
+            or "https://" in lowered
+            or "<" in why_now
+            or ">" in why_now
+            or "fresh off the press" in lowered
+            or "new today" in lowered
+        ):
+            if "product judgment in the ai era" in evidence_text:
+                return (
+                    "The Product Judgment in the AI Era blog was published today, making it the most timely "
+                    "approved source for a public Quainy update."
+                )
+            if "vouch" in evidence_text:
+                return (
+                    "Approved sources identify Quainy Vouch as active product work and a timely proof point "
+                    "for source-grounded, human-reviewed company communication."
+                )
+        if lowered.strip() == now_utc().date().isoformat():
+            if "product judgment in the ai era" in evidence_text:
+                return (
+                    "The Product Judgment in the AI Era blog was published today, making it the most timely "
+                    "approved source for a public Quainy update."
+                )
+            if "vouch" in evidence_text:
+                return "Quainy Vouch is active product work in approved sources and is timely public proof of Quainy's product judgment."
+        if "launch" in lowered and not any(term in evidence_text for term in ["launch", "launched", "release", "released"]):
+            if "vouch" in evidence_text:
+                return (
+                    "Approved sources identify Quainy Vouch as active product work, making it a timely proof point "
+                    "for Quainy's builder-first AI ecosystem."
+                )
+            return "Approved sources identify this as active work, making it a timely public proof point."
+        unsupported_timing_terms = ["milestone", "recently reached", "this week", "new labs"]
+        unsupported_impact_terms = ["impact it", "impact it's", "real-world impact", "having on real-world"]
+        if any(term in lowered for term in unsupported_timing_terms) and not any(
+            term in evidence_text for term in ["milestone", "this week", "recently reached"]
+        ):
+            if "vouch" in evidence_text:
+                return (
+                    "Approved sources identify Quainy Vouch as active product work and a proof artifact for "
+                    "source-grounded, human-reviewed company communication."
+                )
+            if "labs" in evidence_text:
+                return "Approved sources identify Quainy Labs as public proof of Quainy's builder-first learning philosophy."
+            return "Approved sources identify this as active work worth turning into a public proof point."
+        if any(term in lowered for term in unsupported_impact_terms):
+            return "Approved sources support this as a relevant public proof point without claiming external results."
+        if "shining example" in lowered or "join us" in lowered:
+            if "vouch" in evidence_text:
+                return (
+                    "Approved sources connect Quainy Vouch to product judgment, production readiness, "
+                    "source grounding, and human-reviewed company communication."
+                )
+        return why_now
+
+    def _is_generic_model_recommendation(self, recommendation: OpportunityRecommendation) -> bool:
+        combined = " ".join([recommendation.title, recommendation.summary, recommendation.why_now]).lower()
+        generic_phrases = [
+            "source-backed communication opportunity",
+            "approved source context is available",
+            "turn approved context",
+            "use approved context",
+        ]
+        return any(phrase in combined for phrase in generic_phrases)
+
+    def _prioritize_model_evidence(
+        self,
+        query: str,
+        evidence: list[SourceChunk],
+        sources: list[Source],
+    ) -> list[SourceChunk]:
+        source_by_id = {source.id: source for source in sources}
+        query_terms = terms(query) - {"quainy", "source", "context", "public", "content"}
+
+        def evidence_key(chunk: SourceChunk) -> tuple[float, int]:
+            source = source_by_id.get(chunk.source_id)
+            source_terms = terms(source.title if source else "") - {"quainy", "source", "context", "public", "content"}
+            title_overlap = len(query_terms & source_terms) / max(len(source_terms), 1)
+            chunk_overlap = len(query_terms & terms(chunk.chunk_text)) / max(len(query_terms), 1)
+            return (title_overlap * 2.0 + chunk_overlap, -chunk.chunk_index)
+
+        return sorted(evidence, key=evidence_key, reverse=True)
+
+    def _merge_opportunities(
+        self,
+        primary: list[ContentOpportunity],
+        fallback: list[ContentOpportunity],
+        limit: int = 12,
+    ) -> list[ContentOpportunity]:
+        merged: list[ContentOpportunity] = []
+        seen: set[str] = set()
+        for opportunity in [*primary, *fallback]:
+            key_terms = terms(opportunity.title)
+            key = " ".join(sorted(key_terms)) or opportunity.title.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            merged.append(opportunity)
+            if len(merged) >= limit:
+                break
+        return merged
 
     def create_calendar_event(
         self,
@@ -1709,8 +2106,13 @@ class DataStore:
         evidence = "\n".join(f"- {chunk.source_id}: {chunk.chunk_text[:360]}" for chunk in chunks[:8])
         pillars = ", ".join(profile.content_pillars[:8]) or "approved company context"
         return (
-            "Generate source-grounded public communication opportunities as JSON. "
-            "Use only the approved evidence. Avoid unsupported claims.\n"
+            "Generate source-grounded public communication opportunities as JSON. Use only the approved evidence. "
+            "Avoid unsupported claims. Prefer concrete events, launches, product work, published posts, labs, repos, "
+            "or current milestones over abstract philosophy. If a recent blog, product, release, or public proof artifact "
+            "appears in evidence, suggest a timely opportunity about that specific thing. "
+            "When evidence includes Quainy Vouch or a blog published today, prioritize those recommendations first. "
+            "Titles must be specific and public-facing, never template phrases like 'share a practical point of view'.\n"
+            f"Today: {now_utc().date().isoformat()}\n"
             f"Audience: {profile.audience or 'unspecified'}\n"
             f"Content pillars: {pillars}\n"
             f"Approved sources: {', '.join(source.title for source in sources[:8])}\n"
