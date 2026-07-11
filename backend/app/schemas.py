@@ -17,6 +17,21 @@ def new_id(prefix: str) -> str:
     return f"{prefix}_{uuid4().hex[:12]}"
 
 
+def normalize_confidence_score(value: Any) -> Any:
+    if isinstance(value, str):
+        stripped = value.strip().rstrip("%")
+        try:
+            value = float(stripped)
+        except ValueError:
+            return value
+    if isinstance(value, (int, float)) and value > 1:
+        if value <= 10:
+            return value / 10
+        if value <= 100:
+            return value / 100
+    return value
+
+
 class SourceStatus(str, Enum):
     approved = "approved"
     disabled = "disabled"
@@ -159,6 +174,11 @@ class JobKind(str, Enum):
     analytics_import = "analytics_import"
     performance_capture = "performance_capture"
     preference_suggestion_generation = "preference_suggestion_generation"
+
+
+class ModelCallStatus(str, Enum):
+    succeeded = "succeeded"
+    failed = "failed"
 
 
 class OnboardingStep(str, Enum):
@@ -537,6 +557,22 @@ class RetrievalResult(BaseModel):
     score: float
 
 
+class OpportunityRecommendation(BaseModel):
+    title: str = Field(min_length=1)
+    summary: str = Field(min_length=1)
+    why_now: str = Field(min_length=1)
+    confidence: float = Field(ge=0.0, le=1.0)
+
+    @field_validator("confidence", mode="before")
+    @classmethod
+    def normalize_confidence(cls, value: Any) -> Any:
+        return normalize_confidence_score(value)
+
+
+class OpportunityRecommendationSet(BaseModel):
+    recommendations: list[OpportunityRecommendation] = Field(default_factory=list)
+
+
 class ContentOpportunity(BaseModel):
     id: str = Field(default_factory=lambda: new_id("opp"))
     organization_id: str
@@ -569,6 +605,15 @@ class ContentBrief(BaseModel):
     created_at: datetime = Field(default_factory=now_utc)
 
 
+class BriefRecommendation(BaseModel):
+    objective: str = Field(min_length=1)
+    audience: str = Field(min_length=1)
+    key_message: str = Field(min_length=1)
+    supporting_points: list[str] = Field(default_factory=list)
+    claims: list[str] = Field(default_factory=list)
+    risks: list[str] = Field(default_factory=list)
+
+
 class DraftGenerationSpec(BaseModel):
     id: str = Field(default_factory=lambda: new_id("spec"))
     content_brief_id: str
@@ -589,6 +634,11 @@ class ClaimCheck(BaseModel):
     support_status: str
     supporting_chunk_ids: list[str] = Field(default_factory=list)
     risk_reason: str | None = None
+
+    @field_validator("confidence", mode="before")
+    @classmethod
+    def normalize_confidence(cls, value: Any) -> Any:
+        return normalize_confidence_score(value)
 
 
 class Draft(BaseModel):
@@ -615,6 +665,41 @@ class Draft(BaseModel):
     publish_result: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime = Field(default_factory=now_utc)
     updated_at: datetime = Field(default_factory=now_utc)
+
+
+class DraftVariantRecommendation(BaseModel):
+    hook: str = Field(min_length=1)
+    body: str = Field(min_length=1)
+    hashtags: list[str] = Field(default_factory=list)
+
+
+class DraftRecommendationSet(BaseModel):
+    variants: list[DraftVariantRecommendation] = Field(default_factory=list)
+
+
+class ClaimExtractionResult(BaseModel):
+    claims: list[str] = Field(default_factory=list)
+
+
+class RiskCheckResult(BaseModel):
+    risks: list[str] = Field(default_factory=list)
+    quality_notes: list[str] = Field(default_factory=list)
+
+
+class StrategyRecommendation(BaseModel):
+    title: str = Field(min_length=1)
+    rationale: str = Field(min_length=1)
+    source_basis: list[str] = Field(default_factory=list)
+    confidence: float = Field(ge=0.0, le=1.0)
+
+    @field_validator("confidence", mode="before")
+    @classmethod
+    def normalize_confidence(cls, value: Any) -> Any:
+        return normalize_confidence_score(value)
+
+
+class StrategyRecommendationSet(BaseModel):
+    recommendations: list[StrategyRecommendation] = Field(default_factory=list)
 
 
 class DraftCreateResult(BaseModel):
@@ -671,6 +756,87 @@ class LinkedInIntegrationUpdate(BaseModel):
 class LinkedInIntegration(LinkedInIntegrationUpdate):
     organization_id: str
     updated_at: datetime = Field(default_factory=now_utc)
+
+
+class AIProviderKind(str, Enum):
+    deterministic = "deterministic"
+    openai = "openai"
+    openai_compatible = "openai_compatible"
+    local = "local"
+
+
+class AIProviderRuntime(str, Enum):
+    none = "none"
+    ollama = "ollama"
+    vllm = "vllm"
+    lm_studio = "lm_studio"
+    custom = "custom"
+
+
+class AIProviderSettingsUpdate(BaseModel):
+    generation_provider: AIProviderKind = AIProviderKind.deterministic
+    generation_model: str = "deterministic-structured-v1"
+    generation_base_url: str | None = None
+    generation_api_key_env_var: str | None = None
+    embedding_provider: AIProviderKind = AIProviderKind.deterministic
+    embedding_model: str = "local-hash"
+    embedding_base_url: str | None = None
+    embedding_api_key_env_var: str | None = None
+    local_runtime: AIProviderRuntime = AIProviderRuntime.none
+    enabled: bool = True
+
+    @field_validator(
+        "generation_model",
+        "generation_base_url",
+        "generation_api_key_env_var",
+        "embedding_model",
+        "embedding_base_url",
+        "embedding_api_key_env_var",
+    )
+    @classmethod
+    def clean_optional_provider_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        cleaned = value.strip()
+        return cleaned or None
+
+    @field_validator("generation_api_key_env_var", "embedding_api_key_env_var")
+    @classmethod
+    def validate_secret_reference(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        if not value.replace("_", "").replace("-", "").isalnum():
+            raise ValueError("Secret reference can only include letters, numbers, underscores, and hyphens")
+        return value
+
+    @model_validator(mode="after")
+    def validate_provider_requirements(self) -> AIProviderSettingsUpdate:
+        if self.generation_provider in {AIProviderKind.openai_compatible, AIProviderKind.local} and not self.generation_base_url:
+            raise ValueError("Generation base URL is required for OpenAI-compatible or local providers")
+        if self.embedding_provider in {AIProviderKind.openai_compatible, AIProviderKind.local} and not self.embedding_base_url:
+            raise ValueError("Embedding base URL is required for OpenAI-compatible or local providers")
+        if self.generation_provider == AIProviderKind.openai and not self.generation_api_key_env_var:
+            self.generation_api_key_env_var = "OPENAI_API_KEY"
+        if self.embedding_provider == AIProviderKind.openai and not self.embedding_api_key_env_var:
+            self.embedding_api_key_env_var = "OPENAI_API_KEY"
+        return self
+
+
+class AIProviderSettings(AIProviderSettingsUpdate):
+    organization_id: str
+    generation_api_key_configured: bool = False
+    embedding_api_key_configured: bool = False
+    updated_at: datetime = Field(default_factory=now_utc)
+    updated_by: str | None = None
+
+
+class AIProviderConnectionTest(BaseModel):
+    organization_id: str
+    provider: str
+    model: str
+    status: str
+    message: str
+    checked_at: datetime = Field(default_factory=now_utc)
 
 
 class DraftPublishCreate(BaseModel):
@@ -910,6 +1076,25 @@ class BackgroundJobLog(BaseModel):
     message: str
     level: str = "info"
     metadata: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime = Field(default_factory=now_utc)
+
+
+class ModelCallLog(BaseModel):
+    id: str = Field(default_factory=lambda: new_id("modelcall"))
+    organization_id: str
+    actor_id: str = "local_user"
+    provider: str
+    model: str
+    prompt_version: str
+    schema_name: str
+    status: ModelCallStatus
+    prompt_hash: str
+    source_ids: list[str] = Field(default_factory=list)
+    request_metadata: dict[str, Any] = Field(default_factory=dict)
+    response_metadata: dict[str, Any] = Field(default_factory=dict)
+    token_usage: dict[str, int] = Field(default_factory=dict)
+    cost_usd: float | None = None
+    error_message: str | None = None
     created_at: datetime = Field(default_factory=now_utc)
 
 

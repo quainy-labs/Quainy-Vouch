@@ -13,10 +13,35 @@ class PromptVersion:
 class PromptVersionRegistry:
     def __init__(self) -> None:
         self._versions = {
+            "opportunity_generation": PromptVersion(
+                key="opportunity_generation",
+                version="opportunity_generation.v1",
+                description="Generate structured opportunity suggestions from profile, approved sources, memory, and freshness context.",
+            ),
             "brief_builder": PromptVersion(
                 key="brief_builder",
                 version="brief_builder.v1",
                 description="Build a platform-independent content brief from approved sources.",
+            ),
+            "draft_generation": PromptVersion(
+                key="draft_generation",
+                version="draft_generation.v1",
+                description="Generate structured draft variants from a source-grounded brief and platform adapter rules.",
+            ),
+            "claim_extraction": PromptVersion(
+                key="claim_extraction",
+                version="claim_extraction.v1",
+                description="Extract factual and judgment claims from generated content.",
+            ),
+            "risk_check": PromptVersion(
+                key="risk_check",
+                version="risk_check.v1",
+                description="Check unsupported claims, tone risk, quality issues, and reviewer concerns.",
+            ),
+            "strategy_recommendations": PromptVersion(
+                key="strategy_recommendations",
+                version="strategy_recommendations.v1",
+                description="Generate explainable strategy recommendations from sources, content memory, and performance signals.",
             ),
             "linkedin_company_post": PromptVersion(
                 key="linkedin_company_post",

@@ -19,6 +19,7 @@ from app.schemas import (
     SourceChunk,
     StrategyDashboard,
 )
+from app.providers import ModelProviderResult
 
 
 @dataclass(frozen=True)
@@ -185,7 +186,12 @@ class PublishingAdapter(Protocol):
 class ModelProvider(Protocol):
     provider_name: str
 
-    def generate_structured(self, prompt: str, schema_name: str) -> dict[str, Any]:
+    def generate_structured(
+        self,
+        prompt: str,
+        schema_name: str,
+        json_schema: dict[str, Any] | None = None,
+    ) -> ModelProviderResult:
         """Generate structured output from a model provider."""
 
 

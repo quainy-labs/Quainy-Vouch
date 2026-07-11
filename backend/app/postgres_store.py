@@ -14,6 +14,8 @@ from psycopg.types.json import Jsonb
 
 from app.schemas import (
     Account,
+    AIProviderSettings,
+    AIProviderSettingsUpdate,
     ApprovalDecision,
     ApprovalPolicy,
     AuditLog,
@@ -32,6 +34,8 @@ from app.schemas import (
     JobStatus,
     LinkedInIntegration,
     LinkedInIntegrationUpdate,
+    ModelCallLog,
+    ModelCallStatus,
     OnboardingState,
     OnboardingStep,
     Organization,
@@ -252,6 +256,16 @@ class PostgresDataStore(DataStore):
         policy = super().update_approval_policy(organization_id, payload, actor_id)
         self._persist_approval_policy(policy)
         return policy
+
+    def update_ai_provider_settings(
+        self,
+        organization_id: str,
+        payload: AIProviderSettingsUpdate,
+        actor_id: str = "local_user",
+    ) -> AIProviderSettings:
+        settings = super().update_ai_provider_settings(organization_id, payload, actor_id)
+        self._persist_ai_provider_settings(settings)
+        return settings
 
     def mark_onboarding_step(self, organization_id: str, account_id: str, step: OnboardingStep, profile_skipped: bool | None = None):
         onboarding = super().mark_onboarding_step(organization_id, account_id, step, profile_skipped)
@@ -487,6 +501,7 @@ class PostgresDataStore(DataStore):
         self._load_organizations()
         self._load_profiles()
         self._load_approval_policies()
+        self._load_ai_provider_settings()
         self._load_users()
         self._load_onboarding()
         self._load_sources()
@@ -505,6 +520,7 @@ class PostgresDataStore(DataStore):
         self._load_audit_logs()
         self._load_jobs()
         self._load_job_logs()
+        self._load_model_call_logs()
         self._load_sessions()
 
     def _load_accounts(self) -> None:
@@ -539,6 +555,29 @@ class PostgresDataStore(DataStore):
             rows = connection.execute("SELECT * FROM approval_policies").fetchall()
         for row in rows:
             self.approval_policies[row["organization_id"]] = ApprovalPolicy(**dict(row))
+
+    def _load_ai_provider_settings(self) -> None:
+        with self._connect() as connection:
+            rows = connection.execute("SELECT * FROM ai_provider_settings").fetchall()
+        for row in rows:
+            settings = AIProviderSettings(
+                organization_id=row["organization_id"],
+                generation_provider=row["generation_provider"],
+                generation_model=row["generation_model"],
+                generation_base_url=row["generation_base_url"],
+                generation_api_key_env_var=row["generation_api_key_env_var"],
+                embedding_provider=row["embedding_provider"],
+                embedding_model=row["embedding_model"],
+                embedding_base_url=row["embedding_base_url"],
+                embedding_api_key_env_var=row["embedding_api_key_env_var"],
+                local_runtime=row["local_runtime"],
+                enabled=row["enabled"],
+                generation_api_key_configured=bool(row["generation_api_key_env_var"]),
+                embedding_api_key_configured=bool(row["embedding_api_key_env_var"]),
+                updated_at=row["updated_at"],
+                updated_by=row["updated_by"],
+            )
+            self.ai_provider_settings[settings.organization_id] = settings
 
     def _load_users(self) -> None:
         with self._connect() as connection:
@@ -878,6 +917,31 @@ class PostgresDataStore(DataStore):
                 )
             )
 
+    def _load_model_call_logs(self) -> None:
+        with self._connect() as connection:
+            rows = connection.execute("SELECT * FROM model_call_logs ORDER BY created_at").fetchall()
+        for row in rows:
+            self.model_call_logs.append(
+                ModelCallLog(
+                    id=row["id"],
+                    organization_id=row["organization_id"],
+                    actor_id=row["actor_id"] or "local_user",
+                    provider=row["provider"],
+                    model=row["model"],
+                    prompt_version=row["prompt_version"],
+                    schema_name=row["schema_name"],
+                    status=ModelCallStatus(row["status"]),
+                    prompt_hash=row["prompt_hash"],
+                    source_ids=row["source_ids"],
+                    request_metadata=row["request_metadata"],
+                    response_metadata=row["response_metadata"],
+                    token_usage=row["token_usage"],
+                    cost_usd=float(row["cost_usd"]) if row["cost_usd"] is not None else None,
+                    error_message=row["error_message"],
+                    created_at=row["created_at"],
+                )
+            )
+
     def _load_sessions(self) -> None:
         with self._connect() as connection:
             rows = connection.execute(
@@ -898,6 +962,7 @@ class PostgresDataStore(DataStore):
             self._persist_organization(org, connection)
             self._persist_profile(self.profiles[org.id], connection)
             self._persist_approval_policy(self.approval_policies[org.id], connection)
+            self._persist_ai_provider_settings(self.ai_provider_settings[org.id], connection)
             self._delete_user(org.id, "local_user", connection)
             self._persist_user(user, account.id, connection)
             self._persist_onboarding(onboarding, connection)
@@ -907,6 +972,7 @@ class PostgresDataStore(DataStore):
             self._persist_organization(org, connection)
             self._persist_profile(self.profiles[org.id], connection)
             self._persist_approval_policy(self.approval_policies[org.id], connection)
+            self._persist_ai_provider_settings(self.ai_provider_settings[org.id], connection)
             self._persist_user(self.users[(org.id, "local_user")], None, connection)
 
     def _persist_account(self, account: Account, connection=None) -> None:
@@ -1051,6 +1117,53 @@ class PostgresDataStore(DataStore):
                     policy.require_approval_before_publish,
                     policy.allow_risk_override,
                     policy.updated_at,
+                ),
+            )
+        finally:
+            if own_connection:
+                connection.commit()
+                connection.close()
+
+    def _persist_ai_provider_settings(self, settings: AIProviderSettings, connection=None) -> None:
+        own_connection = connection is None
+        connection = connection or self._connect()
+        try:
+            connection.execute(
+                """
+                INSERT INTO ai_provider_settings (
+                    organization_id, generation_provider, generation_model, generation_base_url,
+                    generation_api_key_env_var, embedding_provider, embedding_model, embedding_base_url,
+                    embedding_api_key_env_var, local_runtime, enabled, updated_at, updated_by
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (organization_id) DO UPDATE SET
+                    generation_provider = EXCLUDED.generation_provider,
+                    generation_model = EXCLUDED.generation_model,
+                    generation_base_url = EXCLUDED.generation_base_url,
+                    generation_api_key_env_var = EXCLUDED.generation_api_key_env_var,
+                    embedding_provider = EXCLUDED.embedding_provider,
+                    embedding_model = EXCLUDED.embedding_model,
+                    embedding_base_url = EXCLUDED.embedding_base_url,
+                    embedding_api_key_env_var = EXCLUDED.embedding_api_key_env_var,
+                    local_runtime = EXCLUDED.local_runtime,
+                    enabled = EXCLUDED.enabled,
+                    updated_at = EXCLUDED.updated_at,
+                    updated_by = EXCLUDED.updated_by
+                """,
+                (
+                    settings.organization_id,
+                    settings.generation_provider.value,
+                    settings.generation_model,
+                    settings.generation_base_url,
+                    settings.generation_api_key_env_var,
+                    settings.embedding_provider.value,
+                    settings.embedding_model,
+                    settings.embedding_base_url,
+                    settings.embedding_api_key_env_var,
+                    settings.local_runtime.value,
+                    settings.enabled,
+                    settings.updated_at,
+                    settings.updated_by,
                 ),
             )
         finally:
@@ -1633,6 +1746,9 @@ class PostgresDataStore(DataStore):
     def _job_log_added(self, log: BackgroundJobLog) -> None:
         self._persist_job_log(log)
 
+    def _model_call_logged(self, log: ModelCallLog) -> None:
+        self._persist_model_call_log(log)
+
     def _persist_job(self, job: BackgroundJob) -> None:
         with self._connect() as connection:
             connection.execute(
@@ -1692,6 +1808,38 @@ class PostgresDataStore(DataStore):
                     log.message,
                     log.level,
                     _json(log.metadata),
+                    log.created_at,
+                ),
+            )
+
+    def _persist_model_call_log(self, log: ModelCallLog) -> None:
+        with self._connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO model_call_logs (
+                    id, organization_id, actor_id, provider, model, prompt_version,
+                    schema_name, status, prompt_hash, source_ids, request_metadata,
+                    response_metadata, token_usage, cost_usd, error_message, created_at
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (id) DO NOTHING
+                """,
+                (
+                    log.id,
+                    log.organization_id,
+                    log.actor_id,
+                    log.provider,
+                    log.model,
+                    log.prompt_version,
+                    log.schema_name,
+                    log.status.value,
+                    log.prompt_hash,
+                    _json(log.source_ids),
+                    _json(log.request_metadata),
+                    _json(log.response_metadata),
+                    _json(log.token_usage),
+                    log.cost_usd,
+                    log.error_message,
                     log.created_at,
                 ),
             )

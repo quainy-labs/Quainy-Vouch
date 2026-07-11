@@ -8,6 +8,9 @@ from fastapi import FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.schemas import (
+    AIProviderConnectionTest,
+    AIProviderSettings,
+    AIProviderSettingsUpdate,
     ApprovalPolicy,
     ApprovalPolicyUpdate,
     AccountLogin,
@@ -31,6 +34,7 @@ from app.schemas import (
     JobKind,
     LinkedInIntegration,
     LinkedInIntegrationUpdate,
+    ModelCallLog,
     OnboardingDecision,
     OnboardingState,
     OnboardingStep,
@@ -396,6 +400,55 @@ def update_approval_policy(
     try:
         actor_id = require_org_role(organization_id, authorization, {UserRole.owner}, actor_id)
         return store.update_approval_policy(organization_id, payload, actor_id)
+    except AuthenticationError as error:
+        raise authentication_failed(error) from error
+    except PermissionDeniedError as error:
+        raise permission_denied(error) from error
+    except NotFoundError as error:
+        raise not_found(error) from error
+
+
+@app.get("/organizations/{organization_id}/ai-provider-settings", response_model=AIProviderSettings)
+def get_ai_provider_settings(
+    organization_id: str,
+    authorization: str | None = Header(default=None),
+) -> AIProviderSettings:
+    try:
+        actor_from_optional_auth(organization_id, authorization)
+        return store.get_ai_provider_settings(organization_id)
+    except AuthenticationError as error:
+        raise authentication_failed(error) from error
+    except NotFoundError as error:
+        raise not_found(error) from error
+
+
+@app.patch("/organizations/{organization_id}/ai-provider-settings", response_model=AIProviderSettings)
+def update_ai_provider_settings(
+    organization_id: str,
+    payload: AIProviderSettingsUpdate,
+    actor_id: str = "local_user",
+    authorization: str | None = Header(default=None),
+) -> AIProviderSettings:
+    try:
+        actor_id = require_org_role(organization_id, authorization, {UserRole.owner}, actor_id)
+        return store.update_ai_provider_settings(organization_id, payload, actor_id)
+    except AuthenticationError as error:
+        raise authentication_failed(error) from error
+    except PermissionDeniedError as error:
+        raise permission_denied(error) from error
+    except NotFoundError as error:
+        raise not_found(error) from error
+
+
+@app.post("/organizations/{organization_id}/ai-provider-settings/test", response_model=AIProviderConnectionTest)
+def test_ai_provider_settings(
+    organization_id: str,
+    actor_id: str = "local_user",
+    authorization: str | None = Header(default=None),
+) -> AIProviderConnectionTest:
+    try:
+        actor_id = require_org_role(organization_id, authorization, {UserRole.owner, UserRole.editor}, actor_id)
+        return store.test_ai_provider_settings(organization_id, actor_id)
     except AuthenticationError as error:
         raise authentication_failed(error) from error
     except PermissionDeniedError as error:
@@ -1058,6 +1111,20 @@ def list_jobs(
     try:
         actor_from_optional_auth(organization_id, authorization)
         return store.list_jobs(organization_id)
+    except AuthenticationError as error:
+        raise authentication_failed(error) from error
+    except NotFoundError as error:
+        raise not_found(error) from error
+
+
+@app.get("/organizations/{organization_id}/model-calls", response_model=list[ModelCallLog])
+def list_model_calls(
+    organization_id: str,
+    authorization: str | None = Header(default=None),
+) -> list[ModelCallLog]:
+    try:
+        actor_from_optional_auth(organization_id, authorization)
+        return store.list_model_call_logs(organization_id)
     except AuthenticationError as error:
         raise authentication_failed(error) from error
     except NotFoundError as error:

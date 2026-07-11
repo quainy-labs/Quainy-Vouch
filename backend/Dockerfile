@@ -8,7 +8,8 @@ RUN pip install --no-cache-dir \
     "uvicorn[standard]>=0.30.0" \
     "pydantic>=2.8.0" \
     "psycopg[binary]>=3.1.0" \
-    "alembic>=1.13.0"
+    "alembic>=1.13.0" \
+    "openai>=1.0.0"
 
 COPY . .
 

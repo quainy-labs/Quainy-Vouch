@@ -72,6 +72,28 @@ CREATE TABLE IF NOT EXISTS approval_policies (
     updated_at TIMESTAMPTZ NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS ai_provider_settings (
+    organization_id TEXT PRIMARY KEY REFERENCES organizations(id) ON DELETE CASCADE,
+    generation_provider TEXT NOT NULL DEFAULT 'deterministic'
+        CHECK (generation_provider IN ('deterministic', 'openai', 'openai_compatible', 'local')),
+    generation_model TEXT NOT NULL DEFAULT 'deterministic-structured-v1',
+    generation_base_url TEXT,
+    generation_api_key_env_var TEXT,
+    embedding_provider TEXT NOT NULL DEFAULT 'deterministic'
+        CHECK (embedding_provider IN ('deterministic', 'openai', 'openai_compatible', 'local')),
+    embedding_model TEXT NOT NULL DEFAULT 'local-hash',
+    embedding_base_url TEXT,
+    embedding_api_key_env_var TEXT,
+    local_runtime TEXT NOT NULL DEFAULT 'none'
+        CHECK (local_runtime IN ('none', 'ollama', 'vllm', 'lm_studio', 'custom')),
+    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    updated_at TIMESTAMPTZ NOT NULL,
+    updated_by TEXT
+);
+
+CREATE INDEX IF NOT EXISTS ai_provider_settings_provider_idx
+    ON ai_provider_settings (generation_provider, generation_model);
+
 CREATE TABLE IF NOT EXISTS company_profiles (
     organization_id TEXT PRIMARY KEY REFERENCES organizations(id) ON DELETE CASCADE,
     one_liner TEXT,
@@ -382,6 +404,28 @@ CREATE TABLE IF NOT EXISTS background_job_logs (
 );
 
 CREATE INDEX IF NOT EXISTS background_job_logs_job_created_idx ON background_job_logs (job_id, created_at);
+
+CREATE TABLE IF NOT EXISTS model_call_logs (
+    id TEXT PRIMARY KEY,
+    organization_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    actor_id TEXT,
+    provider TEXT NOT NULL,
+    model TEXT NOT NULL,
+    prompt_version TEXT NOT NULL,
+    schema_name TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('succeeded', 'failed')),
+    prompt_hash TEXT NOT NULL,
+    source_ids JSONB NOT NULL DEFAULT '[]',
+    request_metadata JSONB NOT NULL DEFAULT '{}',
+    response_metadata JSONB NOT NULL DEFAULT '{}',
+    token_usage JSONB NOT NULL DEFAULT '{}',
+    cost_usd NUMERIC,
+    error_message TEXT,
+    created_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS model_call_logs_org_created_idx ON model_call_logs (organization_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS model_call_logs_provider_idx ON model_call_logs (provider, model, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS audit_logs (
     id TEXT PRIMARY KEY,

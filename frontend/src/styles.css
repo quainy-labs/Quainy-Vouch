@@ -2761,6 +2761,35 @@ textarea {
   width: 16px;
 }
 
+.provider-enabled {
+  align-self: center;
+  color: var(--ink);
+  font-weight: 700;
+}
+
+.provider-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.provider-status {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.88rem;
+  line-height: 1.5;
+}
+
+.provider-status.succeeded {
+  color: #176a3a;
+}
+
+.provider-status.failed {
+  color: #8f2b18;
+}
+
 .approval-progress {
   display: flex;
   flex-wrap: wrap;

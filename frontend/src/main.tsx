@@ -309,6 +309,49 @@ type ApprovalPolicyForm = {
   allow_risk_override: boolean;
 };
 
+type AIProviderKind = "deterministic" | "openai" | "openai_compatible" | "local";
+type AIProviderRuntime = "none" | "ollama" | "vllm" | "lm_studio" | "custom";
+
+type AIProviderSettings = {
+  organization_id: string;
+  generation_provider: AIProviderKind;
+  generation_model: string;
+  generation_base_url?: string | null;
+  generation_api_key_env_var?: string | null;
+  generation_api_key_configured: boolean;
+  embedding_provider: AIProviderKind;
+  embedding_model: string;
+  embedding_base_url?: string | null;
+  embedding_api_key_env_var?: string | null;
+  embedding_api_key_configured: boolean;
+  local_runtime: AIProviderRuntime;
+  enabled: boolean;
+  updated_at: string;
+  updated_by?: string | null;
+};
+
+type AIProviderConnectionTest = {
+  organization_id: string;
+  provider: string;
+  model: string;
+  status: "succeeded" | "failed";
+  message: string;
+  checked_at: string;
+};
+
+type AIProviderSettingsForm = {
+  generation_provider: AIProviderKind;
+  generation_model: string;
+  generation_base_url: string;
+  generation_api_key_env_var: string;
+  embedding_provider: AIProviderKind;
+  embedding_model: string;
+  embedding_base_url: string;
+  embedding_api_key_env_var: string;
+  local_runtime: AIProviderRuntime;
+  enabled: boolean;
+};
+
 type PreferenceSuggestion = {
   id: string;
   organization_id: string;
@@ -462,7 +505,7 @@ type FormatChoice =
   | "instagram_carousel_outline";
 
 type WorkspaceView = "studio" | "library" | "calendar" | "sources" | "strategy" | "settings";
-type SetupSection = "company" | "voice" | "claims" | "linkedin";
+type SetupSection = "company" | "voice" | "claims" | "linkedin" | "ai";
 type LibraryStatusFilter =
   | "all"
   | "opportunity"
@@ -859,6 +902,36 @@ function approvalPolicyForm(policy: ApprovalPolicy): ApprovalPolicyForm {
   };
 }
 
+function aiProviderSettingsForm(settings: AIProviderSettings): AIProviderSettingsForm {
+  return {
+    generation_provider: settings.generation_provider,
+    generation_model: settings.generation_model || "deterministic-structured-v1",
+    generation_base_url: settings.generation_base_url ?? "",
+    generation_api_key_env_var: settings.generation_api_key_env_var ?? "",
+    embedding_provider: settings.embedding_provider,
+    embedding_model: settings.embedding_model || "local-hash",
+    embedding_base_url: settings.embedding_base_url ?? "",
+    embedding_api_key_env_var: settings.embedding_api_key_env_var ?? "",
+    local_runtime: settings.local_runtime,
+    enabled: settings.enabled,
+  };
+}
+
+function aiProviderPayload(form: AIProviderSettingsForm) {
+  return {
+    generation_provider: form.generation_provider,
+    generation_model: form.generation_model.trim() || "deterministic-structured-v1",
+    generation_base_url: form.generation_base_url.trim() || null,
+    generation_api_key_env_var: form.generation_api_key_env_var.trim() || null,
+    embedding_provider: form.embedding_provider,
+    embedding_model: form.embedding_model.trim() || "local-hash",
+    embedding_base_url: form.embedding_base_url.trim() || null,
+    embedding_api_key_env_var: form.embedding_api_key_env_var.trim() || null,
+    local_runtime: form.local_runtime,
+    enabled: form.enabled,
+  };
+}
+
 function App() {
   const [currentUser, setCurrentUser] = useState<WorkspaceUser | null>(null);
   const [onboarding, setOnboarding] = useState<OnboardingState | null>(null);
@@ -898,6 +971,9 @@ function App() {
   const [userForm, setUserForm] = useState<UserForm>(emptyUserForm);
   const [approvalPolicy, setApprovalPolicy] = useState<ApprovalPolicy | null>(null);
   const [approvalPolicyDraft, setApprovalPolicyDraft] = useState<ApprovalPolicyForm | null>(null);
+  const [aiProviderSettings, setAiProviderSettings] = useState<AIProviderSettings | null>(null);
+  const [aiProviderDraft, setAiProviderDraft] = useState<AIProviderSettingsForm | null>(null);
+  const [aiProviderTest, setAiProviderTest] = useState<AIProviderConnectionTest | null>(null);
   const [preferenceSuggestions, setPreferenceSuggestions] = useState<PreferenceSuggestion[]>([]);
   const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>([]);
   const [trendSignals, setTrendSignals] = useState<TrendSignal[]>([]);
@@ -947,6 +1023,10 @@ function App() {
         api<ApprovalPolicy>(`/organizations/${data.organization.id}/approval-policy`).then((policy) => {
           setApprovalPolicy(policy);
           setApprovalPolicyDraft(approvalPolicyForm(policy));
+        }),
+        api<AIProviderSettings>(`/organizations/${data.organization.id}/ai-provider-settings`).then((settings) => {
+          setAiProviderSettings(settings);
+          setAiProviderDraft(aiProviderSettingsForm(settings));
         }),
         api<PreferenceSuggestion[]>(`/organizations/${data.organization.id}/preference-suggestions`).then(setPreferenceSuggestions),
         api<CalendarEvent[]>(`/organizations/${data.organization.id}/calendar-events`).then(setCalendarEvents),
@@ -1063,6 +1143,7 @@ function App() {
     { id: "voice", label: "Voice" },
     { id: "claims", label: "Claims" },
     { id: "linkedin", label: "LinkedIn" },
+    { id: "ai", label: "AI" },
   ];
   const recentJobs = jobs.slice(0, 5);
   const failedJobCount = jobs.filter((job) => job.status === "failed").length;
@@ -1512,6 +1593,10 @@ function App() {
         api<ApprovalPolicy>(`/organizations/${response.workspace.organization.id}/approval-policy`).then((policy) => {
           setApprovalPolicy(policy);
           setApprovalPolicyDraft(approvalPolicyForm(policy));
+        }),
+        api<AIProviderSettings>(`/organizations/${response.workspace.organization.id}/ai-provider-settings`).then((settings) => {
+          setAiProviderSettings(settings);
+          setAiProviderDraft(aiProviderSettingsForm(settings));
         }),
         api<PreferenceSuggestion[]>(`/organizations/${response.workspace.organization.id}/preference-suggestions`).then(setPreferenceSuggestions),
         api<CalendarEvent[]>(`/organizations/${response.workspace.organization.id}/calendar-events`).then(setCalendarEvents),
@@ -2260,6 +2345,74 @@ function App() {
     }
   }
 
+  function validateAIProviderForm(form: AIProviderSettingsForm): string[] {
+    const errors: string[] = [];
+    if (!form.generation_model.trim()) errors.push("Generation model is required.");
+    if (!form.embedding_model.trim()) errors.push("Embedding model is required.");
+    if (["openai_compatible", "local"].includes(form.generation_provider) && !form.generation_base_url.trim()) {
+      errors.push("Generation base URL is required for local or OpenAI-compatible providers.");
+    }
+    if (["openai_compatible", "local"].includes(form.embedding_provider) && !form.embedding_base_url.trim()) {
+      errors.push("Embedding base URL is required for local or OpenAI-compatible providers.");
+    }
+    const secretPattern = /^[A-Za-z0-9_-]*$/;
+    if (!secretPattern.test(form.generation_api_key_env_var) || !secretPattern.test(form.embedding_api_key_env_var)) {
+      errors.push("Secret references can only include letters, numbers, underscores, and hyphens.");
+    }
+    return errors;
+  }
+
+  async function saveAIProviderSettings() {
+    if (!bootstrap || !aiProviderDraft) return;
+    if (!requirePermission(canManageWorkspace, workspacePermissionMessage)) return;
+    const errors = validateAIProviderForm(aiProviderDraft);
+    if (errors.length > 0) {
+      setNotice(errors.join("\n"));
+      return;
+    }
+    setBusy(true);
+    try {
+      const settings = await api<AIProviderSettings>(`/organizations/${bootstrap.organization.id}/ai-provider-settings`, {
+        method: "PATCH",
+        body: JSON.stringify(aiProviderPayload(aiProviderDraft)),
+      });
+      setAiProviderSettings(settings);
+      setAiProviderDraft(aiProviderSettingsForm(settings));
+      setNotice("AI provider settings saved.");
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "AI provider settings update failed.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function testAIProviderSettings() {
+    if (!bootstrap || !aiProviderDraft) return;
+    const errors = validateAIProviderForm(aiProviderDraft);
+    if (errors.length > 0) {
+      setNotice(errors.join("\n"));
+      return;
+    }
+    setBusy(true);
+    try {
+      const savedSettings = await api<AIProviderSettings>(`/organizations/${bootstrap.organization.id}/ai-provider-settings`, {
+        method: "PATCH",
+        body: JSON.stringify(aiProviderPayload(aiProviderDraft)),
+      });
+      setAiProviderSettings(savedSettings);
+      setAiProviderDraft(aiProviderSettingsForm(savedSettings));
+      const result = await api<AIProviderConnectionTest>(`/organizations/${bootstrap.organization.id}/ai-provider-settings/test`, {
+        method: "POST",
+      });
+      setAiProviderTest(result);
+      setNotice(result.message);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "AI provider test failed.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function generatePreferenceSuggestions() {
     if (!bootstrap) return;
     if (!requirePermission(canEditContent, knowledgePermissionMessage)) return;
@@ -2680,6 +2833,146 @@ function App() {
                         }
                       />
                     </Field>
+                  </>
+                )}
+                {setupSection === "ai" && aiProviderDraft && (
+                  <>
+                    <Field label="Generation provider">
+                      <select
+                        value={aiProviderDraft.generation_provider}
+                        onChange={(event) =>
+                          setAiProviderDraft({
+                            ...aiProviderDraft,
+                            generation_provider: event.target.value as AIProviderKind,
+                          })
+                        }
+                      >
+                        <option value="deterministic">Deterministic fallback</option>
+                        <option value="openai">OpenAI</option>
+                        <option value="openai_compatible">OpenAI-compatible</option>
+                        <option value="local">Local runtime</option>
+                      </select>
+                    </Field>
+                    <Field label="Generation model">
+                      <input
+                        value={aiProviderDraft.generation_model}
+                        onChange={(event) =>
+                          setAiProviderDraft({ ...aiProviderDraft, generation_model: event.target.value })
+                        }
+                      />
+                    </Field>
+                    <Field label="Generation base URL">
+                      <input
+                        value={aiProviderDraft.generation_base_url}
+                        onChange={(event) =>
+                          setAiProviderDraft({ ...aiProviderDraft, generation_base_url: event.target.value })
+                        }
+                        placeholder="Required for local or compatible providers"
+                      />
+                    </Field>
+                    <Field label="Generation secret reference">
+                      <input
+                        value={aiProviderDraft.generation_api_key_env_var}
+                        onChange={(event) =>
+                          setAiProviderDraft({ ...aiProviderDraft, generation_api_key_env_var: event.target.value })
+                        }
+                        placeholder="Backend environment variable name"
+                      />
+                    </Field>
+                    <Field label="Embedding provider">
+                      <select
+                        value={aiProviderDraft.embedding_provider}
+                        onChange={(event) =>
+                          setAiProviderDraft({
+                            ...aiProviderDraft,
+                            embedding_provider: event.target.value as AIProviderKind,
+                          })
+                        }
+                      >
+                        <option value="deterministic">Local hash</option>
+                        <option value="openai">OpenAI</option>
+                        <option value="openai_compatible">OpenAI-compatible</option>
+                        <option value="local">Local runtime</option>
+                      </select>
+                    </Field>
+                    <Field label="Embedding model">
+                      <input
+                        value={aiProviderDraft.embedding_model}
+                        onChange={(event) => setAiProviderDraft({ ...aiProviderDraft, embedding_model: event.target.value })}
+                      />
+                    </Field>
+                    <Field label="Embedding base URL">
+                      <input
+                        value={aiProviderDraft.embedding_base_url}
+                        onChange={(event) => setAiProviderDraft({ ...aiProviderDraft, embedding_base_url: event.target.value })}
+                        placeholder="Required for local or compatible providers"
+                      />
+                    </Field>
+                    <Field label="Embedding secret reference">
+                      <input
+                        value={aiProviderDraft.embedding_api_key_env_var}
+                        onChange={(event) =>
+                          setAiProviderDraft({ ...aiProviderDraft, embedding_api_key_env_var: event.target.value })
+                        }
+                        placeholder="Backend environment variable name"
+                      />
+                    </Field>
+                    <Field label="Local runtime">
+                      <select
+                        value={aiProviderDraft.local_runtime}
+                        onChange={(event) =>
+                          setAiProviderDraft({ ...aiProviderDraft, local_runtime: event.target.value as AIProviderRuntime })
+                        }
+                      >
+                        <option value="none">None</option>
+                        <option value="ollama">Ollama</option>
+                        <option value="vllm">vLLM</option>
+                        <option value="lm_studio">LM Studio</option>
+                        <option value="custom">Custom</option>
+                      </select>
+                    </Field>
+                    <label className="check-field provider-enabled">
+                      <input
+                        type="checkbox"
+                        checked={aiProviderDraft.enabled}
+                        onChange={(event) => setAiProviderDraft({ ...aiProviderDraft, enabled: event.target.checked })}
+                      />
+                      <span>Use these settings for organization reasoning</span>
+                    </label>
+                    <div className="provider-actions">
+                      <button
+                        className="icon-button"
+                        onClick={saveAIProviderSettings}
+                        disabled={busy || !canManageWorkspace}
+                        title={canManageWorkspace ? "Save AI provider settings" : workspacePermissionMessage}
+                        type="button"
+                      >
+                        <Save size={18} />
+                        <span>Save AI</span>
+                      </button>
+                      <button
+                        className="icon-button"
+                        onClick={testAIProviderSettings}
+                        disabled={busy || !canManageWorkspace}
+                        title={canManageWorkspace ? "Test AI provider" : workspacePermissionMessage}
+                        type="button"
+                      >
+                        <Sparkles size={18} />
+                        <span>Test</span>
+                      </button>
+                    </div>
+                    {aiProviderSettings && (
+                      <p className="provider-status">
+                        Generation secret {aiProviderSettings.generation_api_key_configured ? "referenced" : "not referenced"}.
+                        {" "}
+                        Embedding secret {aiProviderSettings.embedding_api_key_configured ? "referenced" : "not referenced"}.
+                      </p>
+                    )}
+                    {aiProviderTest && (
+                      <p className={`provider-status ${aiProviderTest.status}`}>
+                        {aiProviderTest.status === "succeeded" ? "Connected" : "Check configuration"}: {aiProviderTest.message}
+                      </p>
+                    )}
                   </>
                 )}
               </div>

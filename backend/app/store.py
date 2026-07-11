@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import secrets
 from pathlib import Path
 from typing import Any, Callable
+
+from pydantic import BaseModel, ValidationError
 
 from app.analytics import LocalAnalyticsImportProvider, build_performance_snapshot
 from app.contracts import FormatAdapter
@@ -26,13 +29,18 @@ from app.intelligence import (
 )
 from app.opportunities import OpportunityGenerator
 from app.preference_learning import PreferenceLearningEngine
-from app.providers import build_embedding_provider, build_model_provider, cosine_similarity
+from app.prompt_registry import prompt_versions
+from app.providers import DeterministicModelProvider, build_embedding_provider, build_model_provider, cosine_similarity
 from app.publishing import build_linkedin_publisher
 from app.risk_checks import check_claims, high_risk_unsupported_claims, risk_check
 from app.trends import TrendOpportunityGenerator
 from app.schemas import (
     Account,
     AccountLogin,
+    AIProviderConnectionTest,
+    AIProviderKind,
+    AIProviderSettings,
+    AIProviderSettingsUpdate,
     ApprovalDecision,
     ApprovalPolicy,
     ApprovalPolicyUpdate,
@@ -54,10 +62,13 @@ from app.schemas import (
     Draft,
     DraftPublishCreate,
     DraftStatus,
+    BriefRecommendation,
     JobKind,
     JobStatus,
     LinkedInIntegration,
     LinkedInIntegrationUpdate,
+    ModelCallLog,
+    ModelCallStatus,
     OnboardingDecision,
     OnboardingState,
     OnboardingStep,
@@ -69,6 +80,8 @@ from app.schemas import (
     PreferenceSuggestion,
     PreferenceSuggestionDecision,
     PreferenceSuggestionStatus,
+    DraftRecommendationSet,
+    OpportunityRecommendationSet,
     PublishResult,
     ReviewDecisionCreate,
     SignupCreate,
@@ -143,9 +156,11 @@ class DataStore:
         self.memory: dict[str, PostMemory] = {}
         self.preference_suggestions: dict[str, PreferenceSuggestion] = {}
         self.linkedin_integrations: dict[str, LinkedInIntegration] = {}
+        self.ai_provider_settings: dict[str, AIProviderSettings] = {}
         self.audit_logs: list[AuditLog] = []
         self.jobs: dict[str, BackgroundJob] = {}
         self.job_logs: list[BackgroundJobLog] = []
+        self.model_call_logs: list[ModelCallLog] = []
         self.format_adapters: dict[tuple[str, str], FormatAdapter] = {}
         self.source_connectors = default_source_connectors()
         self.model_provider = build_model_provider()
@@ -385,6 +400,7 @@ class DataStore:
         self.organizations[org.id] = org
         self.profiles[org.id] = CompanyProfile(organization_id=org.id)
         self.approval_policies[org.id] = ApprovalPolicy(organization_id=org.id)
+        self.ai_provider_settings[org.id] = AIProviderSettings(organization_id=org.id)
         self.users[(org.id, "local_user")] = User(
             id="local_user",
             organization_id=org.id,
@@ -419,6 +435,122 @@ class DataStore:
             actor_id,
         )
         return policy
+
+    def get_ai_provider_settings(self, organization_id: str) -> AIProviderSettings:
+        self.get_organization(organization_id)
+        if organization_id not in self.ai_provider_settings:
+            self.ai_provider_settings[organization_id] = AIProviderSettings(organization_id=organization_id)
+        return self.ai_provider_settings[organization_id]
+
+    def update_ai_provider_settings(
+        self,
+        organization_id: str,
+        payload: AIProviderSettingsUpdate,
+        actor_id: str = "local_user",
+    ) -> AIProviderSettings:
+        self.require_role(organization_id, actor_id, {UserRole.owner})
+        settings = AIProviderSettings(
+            organization_id=organization_id,
+            **payload.model_dump(),
+            generation_api_key_configured=bool(payload.generation_api_key_env_var),
+            embedding_api_key_configured=bool(payload.embedding_api_key_env_var),
+            updated_at=now_utc(),
+            updated_by=actor_id,
+        )
+        self.ai_provider_settings[organization_id] = settings
+        self.log(
+            organization_id,
+            "ai_provider_settings.updated",
+            "ai_provider_settings",
+            organization_id,
+            {
+                "generation_provider": settings.generation_provider.value,
+                "generation_model": settings.generation_model,
+                "embedding_provider": settings.embedding_provider.value,
+                "embedding_model": settings.embedding_model,
+                "local_runtime": settings.local_runtime.value,
+                "enabled": settings.enabled,
+                "generation_api_key_configured": settings.generation_api_key_configured,
+                "embedding_api_key_configured": settings.embedding_api_key_configured,
+            },
+            actor_id,
+        )
+        return settings
+
+    def model_provider_for_org(self, organization_id: str):
+        settings = self.get_ai_provider_settings(organization_id)
+        if not settings.enabled:
+            return DeterministicModelProvider()
+        if settings.generation_provider == AIProviderKind.deterministic:
+            return self.model_provider
+        api_key = None
+        if settings.generation_api_key_env_var:
+            api_key = os.getenv(settings.generation_api_key_env_var)
+        return build_model_provider(
+            settings.generation_provider.value,
+            model=settings.generation_model,
+            base_url=settings.generation_base_url,
+            api_key=api_key,
+        )
+
+    def embedding_provider_for_org(self, organization_id: str):
+        settings = self.get_ai_provider_settings(organization_id)
+        if not settings.enabled or settings.embedding_provider == AIProviderKind.deterministic:
+            return self.embedding_provider
+        api_key = None
+        if settings.embedding_api_key_env_var:
+            api_key = os.getenv(settings.embedding_api_key_env_var)
+        return build_embedding_provider(
+            settings.embedding_provider.value,
+            model=settings.embedding_model,
+            base_url=settings.embedding_base_url,
+            api_key=api_key,
+        )
+
+    def test_ai_provider_settings(
+        self,
+        organization_id: str,
+        actor_id: str = "local_user",
+    ) -> AIProviderConnectionTest:
+        self.require_role(organization_id, actor_id, {UserRole.owner, UserRole.editor})
+        settings = self.get_ai_provider_settings(organization_id)
+        provider = self.model_provider_for_org(organization_id)
+        provider_name = getattr(provider, "provider_name", settings.generation_provider.value)
+        provider_model = getattr(provider, "model", settings.generation_model)
+        if isinstance(provider, DeterministicModelProvider):
+            return AIProviderConnectionTest(
+                organization_id=organization_id,
+                provider=provider_name,
+                model=provider_model,
+                status="succeeded",
+                message="Deterministic structured generation is available.",
+            )
+        try:
+            provider.generate_structured(
+                "Return a compact JSON object that confirms provider connectivity.",
+                "AIProviderConnectionTest",
+                {
+                    "type": "object",
+                    "properties": {"ok": {"type": "boolean"}},
+                    "required": ["ok"],
+                    "additionalProperties": False,
+                },
+            )
+        except Exception as error:
+            return AIProviderConnectionTest(
+                organization_id=organization_id,
+                provider=provider_name,
+                model=provider_model,
+                status="failed",
+                message=str(error),
+            )
+        return AIProviderConnectionTest(
+            organization_id=organization_id,
+            provider=provider_name,
+            model=provider_model,
+            status="succeeded",
+            message="Provider returned a structured response.",
+        )
 
     def list_users(self, organization_id: str) -> list[User]:
         self.get_organization(organization_id)
@@ -487,6 +619,7 @@ class DataStore:
         decision_ids = [item.id for item in self.decisions.values() if item.draft_id in draft_ids]
         memory_ids = [item.id for item in self.memory.values() if item.organization_id == organization_id]
         job_ids = [item.id for item in self.jobs.values() if item.organization_id == organization_id]
+        model_call_ids = [item.id for item in self.model_call_logs if item.organization_id == organization_id]
         user_keys = [key for key in self.users if key[0] == organization_id]
         counts = {
             "sources": len(source_ids),
@@ -500,6 +633,7 @@ class DataStore:
             "decisions": len(decision_ids),
             "memory": len(memory_ids),
             "jobs": len(job_ids),
+            "model_calls": len(model_call_ids),
             "users": len(user_keys),
             "audit_logs": len([log for log in self.audit_logs if log.organization_id == organization_id]),
         }
@@ -534,6 +668,7 @@ class DataStore:
             del self.users[key]
         self.approval_policies.pop(organization_id, None)
         self.linkedin_integrations.pop(organization_id, None)
+        self.ai_provider_settings.pop(organization_id, None)
         for suggestion_id in [item.id for item in self.preference_suggestions.values() if item.organization_id == organization_id]:
             self.preference_suggestions.pop(suggestion_id, None)
         for document_id in document_ids:
@@ -541,6 +676,7 @@ class DataStore:
         for job_id in job_ids:
             self.jobs.pop(job_id, None)
         self.job_logs = [log for log in self.job_logs if log.organization_id != organization_id]
+        self.model_call_logs = [log for log in self.model_call_logs if log.organization_id != organization_id]
         self.audit_logs = [log for log in self.audit_logs if log.organization_id != organization_id]
         return receipt
 
@@ -679,7 +815,8 @@ class DataStore:
         self.latest_document_by_source[source.id] = document.id
         created: list[SourceChunk] = []
         chunk_texts = split_chunks(normalized_text)
-        embeddings = self.embedding_provider.embed(chunk_texts)
+        embedding_provider = self.embedding_provider_for_org(source.organization_id)
+        embeddings = embedding_provider.embed(chunk_texts)
         for index, text in enumerate(chunk_texts):
             chunk = SourceChunk(
                 source_document_id=document.id,
@@ -688,7 +825,7 @@ class DataStore:
                 chunk_text=text,
                 chunk_index=index,
                 embedding=embeddings[index],
-                metadata={"embedding_provider": self.embedding_provider.provider_name},
+                metadata={"embedding_provider": embedding_provider.provider_name},
             )
             self.chunks[chunk.id] = chunk
             created.append(chunk)
@@ -709,7 +846,7 @@ class DataStore:
 
     def retrieve_chunks(self, organization_id: str, query: str, limit: int = 6) -> list[tuple[SourceChunk, Source, float]]:
         self.get_organization(organization_id)
-        query_embedding = self.embedding_provider.embed([query])[0]
+        query_embedding = self.embedding_provider_for_org(organization_id).embed([query])[0]
         candidates = self.approved_chunks(organization_id)
         ranked: list[tuple[SourceChunk, Source, float]] = []
         for chunk in candidates:
@@ -722,13 +859,28 @@ class DataStore:
     def generate_opportunities(self, organization_id: str, actor_id: str = "local_user") -> list[ContentOpportunity]:
         profile = self.profiles[organization_id]
         sources = [source for source in self.list_sources(organization_id) if source.approval_status == SourceStatus.approved]
+        chunks = self.approved_chunks(organization_id)
         opportunities = self.opportunity_generator.generate(
             profile,
             sources,
-            self.approved_chunks(organization_id),
+            chunks,
             self.list_memory(organization_id),
         )
+        model_output, model_log = self.generate_structured_safely(
+            organization_id,
+            actor_id,
+            self._opportunity_prompt(profile, sources, chunks),
+            prompt_versions.version("opportunity_generation"),
+            OpportunityRecommendationSet,
+            [source.id for source in sources],
+            {"operation": "opportunity_generation", "source_count": len(sources), "chunk_count": len(chunks)},
+        )
         for opportunity in opportunities:
+            opportunity.metadata["model_call_id"] = model_log.id
+            opportunity.metadata["model_provider"] = model_log.provider
+            opportunity.metadata["model_prompt_version"] = model_log.prompt_version
+            if model_output and model_output.recommendations:
+                opportunity.metadata["model_suggestion"] = model_output.recommendations[0].model_dump(mode="json")
             self.opportunities[opportunity.id] = opportunity
         self.log(organization_id, "opportunities.generated", "organization", organization_id, {"count": len(opportunities)}, actor_id)
         return opportunities
@@ -789,7 +941,27 @@ class DataStore:
 
     def create_brief(self, opportunity_id: str, actor_id: str = "local_user") -> ContentBrief:
         opportunity = self.get_opportunity(opportunity_id)
-        brief = build_brief(self.profiles[opportunity.organization_id], opportunity, self.approved_chunks(opportunity.organization_id))
+        profile = self.profiles[opportunity.organization_id]
+        chunks = self.approved_chunks(opportunity.organization_id)
+        brief = build_brief(profile, opportunity, chunks)
+        model_output, model_log = self.generate_structured_safely(
+            opportunity.organization_id,
+            actor_id,
+            self._brief_prompt(profile, opportunity, chunks),
+            prompt_versions.version("brief_builder"),
+            BriefRecommendation,
+            opportunity.source_ids,
+            {"operation": "brief_builder", "opportunity_id": opportunity.id},
+        )
+        brief.builder_metadata.update(
+            {
+                "model_call_id": model_log.id,
+                "model_provider": model_log.provider,
+                "model_prompt_version": model_log.prompt_version,
+            }
+        )
+        if model_output:
+            brief.builder_metadata["model_recommendation"] = model_output.model_dump(mode="json")
         self.briefs[brief.id] = brief
         self.log(brief.organization_id, "brief.created", "brief", brief.id, actor_id=actor_id)
         return brief
@@ -812,9 +984,28 @@ class DataStore:
             self.list_memory(brief.organization_id),
             adapter,
         )
+        model_output, model_log = self.generate_structured_safely(
+            brief.organization_id,
+            actor_id,
+            self._draft_prompt(self.profiles[brief.organization_id], brief, opportunity, adapter.generation_spec(brief).model_dump(mode="json")),
+            prompt_versions.version("draft_generation"),
+            DraftRecommendationSet,
+            brief.source_ids,
+            {
+                "operation": "draft_generation",
+                "brief_id": brief.id,
+                "platform": platform,
+                "content_type": content_type,
+            },
+        )
         for draft in drafts:
-            draft.generation_metadata["model_provider"] = self.model_provider.provider_name
-            draft.generation_metadata["embedding_provider"] = self.embedding_provider.provider_name
+            draft.generation_metadata["model_provider"] = model_log.provider
+            draft.generation_metadata["model"] = model_log.model
+            draft.generation_metadata["model_call_id"] = model_log.id
+            draft.generation_metadata["model_prompt_version"] = model_log.prompt_version
+            draft.generation_metadata["embedding_provider"] = self.embedding_provider_for_org(brief.organization_id).provider_name
+            if model_output and model_output.variants:
+                draft.generation_metadata["model_recommendation"] = model_output.variants[0].model_dump(mode="json")
             self.drafts[draft.id] = draft
         self.log(brief.organization_id, "drafts.generated", "brief", brief.id, {"count": len(drafts)}, actor_id)
         return drafts
@@ -1509,6 +1700,63 @@ class DataStore:
             key=lambda draft: (draft.scheduled_for is None, draft.scheduled_for or draft.updated_at),
         )
 
+    def _opportunity_prompt(
+        self,
+        profile: CompanyProfile,
+        sources: list[Source],
+        chunks: list[SourceChunk],
+    ) -> str:
+        evidence = "\n".join(f"- {chunk.source_id}: {chunk.chunk_text[:360]}" for chunk in chunks[:8])
+        pillars = ", ".join(profile.content_pillars[:8]) or "approved company context"
+        return (
+            "Generate source-grounded public communication opportunities as JSON. "
+            "Use only the approved evidence. Avoid unsupported claims.\n"
+            f"Audience: {profile.audience or 'unspecified'}\n"
+            f"Content pillars: {pillars}\n"
+            f"Approved sources: {', '.join(source.title for source in sources[:8])}\n"
+            f"Evidence:\n{evidence}"
+        )
+
+    def _brief_prompt(
+        self,
+        profile: CompanyProfile,
+        opportunity: ContentOpportunity,
+        chunks: list[SourceChunk],
+    ) -> str:
+        evidence = "\n".join(
+            f"- {chunk.id}: {chunk.chunk_text[:360]}"
+            for chunk in chunks
+            if chunk.source_id in opportunity.source_ids
+        )
+        return (
+            "Create a platform-independent source-grounded brief as JSON. "
+            "Preserve reviewer caution and do not invent metrics, customers, dates, or claims.\n"
+            f"Audience: {profile.audience or 'unspecified'}\n"
+            f"Opportunity title: {opportunity.title}\n"
+            f"Opportunity summary: {opportunity.summary}\n"
+            f"Why now: {opportunity.reason_today}\n"
+            f"Evidence:\n{evidence[:1800]}"
+        )
+
+    def _draft_prompt(
+        self,
+        profile: CompanyProfile,
+        brief: ContentBrief,
+        opportunity: ContentOpportunity,
+        generation_spec: dict[str, Any],
+    ) -> str:
+        return (
+            "Generate reviewable draft variants as JSON. Use the brief and adapter rules. "
+            "Keep the draft source-grounded, cautious, and easy for a human reviewer to edit.\n"
+            f"Audience: {profile.audience or brief.audience}\n"
+            f"Brief key message: {brief.key_message}\n"
+            f"Supporting points: {' | '.join(brief.supporting_points[:6])}\n"
+            f"Do not say: {' | '.join(brief.do_not_say[:8])}\n"
+            f"Opportunity reason: {opportunity.reason_today}\n"
+            f"Adapter: {generation_spec.get('adapter_name')} {generation_spec.get('prompt_version')}\n"
+            f"Rules: {' | '.join(generation_spec.get('rules', [])[:10])}"
+        )
+
     def create_job(
         self,
         organization_id: str,
@@ -1548,6 +1796,66 @@ class DataStore:
     def list_job_logs(self, job_id: str) -> list[BackgroundJobLog]:
         self.get_job(job_id)
         return sorted([log for log in self.job_logs if log.job_id == job_id], key=lambda log: log.created_at)
+
+    def list_model_call_logs(self, organization_id: str) -> list[ModelCallLog]:
+        self.get_organization(organization_id)
+        return sorted(
+            [log for log in self.model_call_logs if log.organization_id == organization_id],
+            key=lambda log: log.created_at,
+            reverse=True,
+        )
+
+    def generate_structured_safely(
+        self,
+        organization_id: str,
+        actor_id: str,
+        prompt: str,
+        prompt_version: str,
+        schema_model: type[BaseModel],
+        source_ids: list[str] | None = None,
+        request_metadata: dict[str, Any] | None = None,
+    ) -> tuple[BaseModel | None, ModelCallLog]:
+        schema_name = schema_model.__name__
+        prompt_hash = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
+        provider = self.model_provider_for_org(organization_id)
+        try:
+            result = provider.generate_structured(prompt, schema_name, schema_model.model_json_schema())
+            validated = schema_model.model_validate(result.output)
+            log = ModelCallLog(
+                organization_id=organization_id,
+                actor_id=actor_id,
+                provider=result.provider,
+                model=result.model,
+                prompt_version=prompt_version,
+                schema_name=schema_name,
+                status=ModelCallStatus.succeeded,
+                prompt_hash=prompt_hash,
+                source_ids=source_ids or [],
+                request_metadata=request_metadata or {},
+                response_metadata=result.raw_metadata,
+                token_usage=result.token_usage,
+                cost_usd=result.cost_usd,
+            )
+            self.model_call_logs.append(log)
+            self._model_call_logged(log)
+            return validated, log
+        except (RuntimeError, ValueError, ValidationError) as error:
+            log = ModelCallLog(
+                organization_id=organization_id,
+                actor_id=actor_id,
+                provider=getattr(provider, "provider_name", "unknown"),
+                model=getattr(provider, "model", "unknown"),
+                prompt_version=prompt_version,
+                schema_name=schema_name,
+                status=ModelCallStatus.failed,
+                prompt_hash=prompt_hash,
+                source_ids=source_ids or [],
+                request_metadata=request_metadata or {},
+                error_message=str(error),
+            )
+            self.model_call_logs.append(log)
+            self._model_call_logged(log)
+            return None, log
 
     def log_job(
         self,
@@ -1683,6 +1991,9 @@ class DataStore:
         return None
 
     def _job_log_added(self, log: BackgroundJobLog) -> None:
+        return None
+
+    def _model_call_logged(self, log: ModelCallLog) -> None:
         return None
 
     def _memory_id_for_draft(self, draft: Draft) -> str:
