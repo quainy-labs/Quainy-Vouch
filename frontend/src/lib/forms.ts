@@ -348,3 +348,20 @@ export function aiProviderPayload(form: AIProviderSettingsForm) {
     enabled: form.enabled,
   };
 }
+
+export function validateAIProviderForm(form: AIProviderSettingsForm): string[] {
+  const errors: string[] = [];
+  if (!form.generation_model.trim()) errors.push("Generation model is required.");
+  if (!form.embedding_model.trim()) errors.push("Embedding model is required.");
+  if (["openai_compatible", "local"].includes(form.generation_provider) && !form.generation_base_url.trim()) {
+    errors.push("Generation base URL is required for local or OpenAI-compatible providers.");
+  }
+  if (["openai_compatible", "local"].includes(form.embedding_provider) && !form.embedding_base_url.trim()) {
+    errors.push("Embedding base URL is required for local or OpenAI-compatible providers.");
+  }
+  const secretPattern = /^[A-Za-z0-9_-]*$/;
+  if (!secretPattern.test(form.generation_api_key_env_var) || !secretPattern.test(form.embedding_api_key_env_var)) {
+    errors.push("Secret references can only include letters, numbers, underscores, and hyphens.");
+  }
+  return errors;
+}

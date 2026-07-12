@@ -86,13 +86,17 @@ export function AuthScreen({
           )}
           <Field label="Email" required>
             <input
+              key={`${authMode}-email`}
+              name={`${authMode}_email`}
               value={authForm.email}
               onChange={(event) => onAuthFormChange({ ...authForm, email: event.target.value })}
-              autoComplete="email"
+              autoComplete={authMode === "signup" ? "off" : "email"}
             />
           </Field>
           <Field label="Password" required>
             <input
+              key={`${authMode}-password`}
+              name={`${authMode}_password`}
               type="password"
               value={authForm.password}
               onChange={(event) => onAuthFormChange({ ...authForm, password: event.target.value })}

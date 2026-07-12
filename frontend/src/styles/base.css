@@ -1,0 +1,77 @@
+@import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@500;600&family=Manrope:wght@400;600;700;800&display=swap");
+
+:root {
+  --bg: #f4f6f5;
+  --paper: #ffffff;
+  --ink: #111817;
+  --muted: #5b6864;
+  --line: #dce5df;
+  --line-strong: #b8c8c1;
+  --field: #fbfdfc;
+  --field-hover: #ffffff;
+  --focus-ring: rgba(15, 159, 120, 0.16);
+  --green: #0f9f78;
+  --green-dark: #0a6f55;
+  --blue: #2457d6;
+  --blue-soft: #e7edfb;
+  --mint: #e5f5ed;
+  --graphite: #17231f;
+  --coral: #e9573f;
+  --coral-soft: #ffe8e2;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: Manrope, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+button,
+textarea,
+input,
+select {
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+input,
+select,
+textarea {
+  outline: none;
+}
+
+textarea {
+  width: 100%;
+  min-height: 430px;
+  resize: vertical;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  color: var(--ink);
+  background: #fbfcfa;
+  line-height: 1.58;
+  padding: 16px;
+  margin: 4px 0 12px;
+}
+
+select {
+  appearance: none;
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--muted) 50%),
+    linear-gradient(135deg, var(--muted) 50%, transparent 50%);
+  background-position:
+    calc(100% - 18px) 50%,
+    calc(100% - 13px) 50%;
+  background-repeat: no-repeat;
+  background-size: 5px 5px, 5px 5px;
+  padding-right: 38px !important;
+}

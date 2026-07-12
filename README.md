@@ -1,6 +1,6 @@
 # Quainy Vouch
 
-Quainy Vouch is a production-first, source-grounded content intelligence product for turning approved company knowledge into human-reviewed public communication.
+Quainy Vouch is a source-grounded content intelligence product for turning approved company knowledge into human-reviewed public communication.
 
 It helps teams move from approved context to reviewable LinkedIn-style company drafts, blog outlines, newsletter emails, and Instagram captions/carousels without handing a tool broad internal access or allowing autonomous publishing.
 

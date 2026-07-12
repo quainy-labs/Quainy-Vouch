@@ -1,0 +1,158 @@
+.eyebrow {
+  margin: 0;
+  color: var(--green);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.onboarding-banner p:not(.eyebrow) {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.platform-count {
+  background: var(--paper);
+  color: var(--muted);
+}
+
+h2,
+h3,
+p {
+  letter-spacing: 0;
+}
+
+h2 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+h3 {
+  margin: 8px 0;
+  font-size: 1rem;
+  line-height: 1.25;
+}
+
+.source-list-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.source-list-summary span {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--mint);
+  color: var(--green-dark);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.68rem;
+  font-weight: 700;
+  line-height: 1.2;
+  padding: 6px 8px;
+}
+
+.small-textarea {
+  min-height: 78px;
+}
+
+.list-textarea {
+  min-height: 132px;
+}
+
+.status-pill {
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 7px 10px;
+}
+
+.status-pill.approved {
+  border-color: var(--green);
+  background: var(--mint);
+  color: var(--green-dark);
+}
+
+.status-pill.disabled {
+  border-color: var(--coral);
+  background: var(--coral-soft);
+  color: var(--coral);
+}
+
+.status-pill.archived {
+  background: var(--line);
+  color: var(--muted);
+}
+
+.empty-results {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.empty-opportunities {
+  display: grid;
+  min-height: 180px;
+  place-items: center;
+  align-content: center;
+  gap: 10px;
+  border: 1px dashed var(--line-strong);
+  border-radius: 8px;
+  color: var(--muted);
+  padding: 18px;
+  text-align: center;
+}
+
+.empty-opportunities p {
+  max-width: 460px;
+  margin: 0;
+}
+
+.warning-list {
+  display: grid;
+  gap: 5px;
+  margin: 10px 0 0;
+  padding-left: 18px;
+  color: var(--coral);
+  font-size: 0.82rem;
+  line-height: 1.35;
+}
+
+.notice {
+  margin: 10px 0 0;
+  color: var(--green-dark);
+  font-weight: 700;
+}
+
+.plain-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding-left: 18px;
+  color: var(--muted);
+  line-height: 1.4;
+}
+
+.connection-card p:not(.eyebrow) {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.auth-copy p:not(.eyebrow) {
+  margin: 0;
+  max-width: 620px;
+  color: rgba(255, 255, 255, 0.78);
+  line-height: 1.55;
+}
+
+.view-hero p:not(.eyebrow) {
+  max-width: 780px;
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.45;
+}

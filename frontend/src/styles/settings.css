@@ -1,0 +1,143 @@
+.policy-grid {
+  display: grid;
+  grid-template-columns: minmax(140px, 0.8fr) repeat(3, minmax(140px, 1fr));
+  gap: 8px;
+  align-items: end;
+}
+
+.policy-grid label {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.policy-grid input {
+  min-height: 36px;
+  border: 1px solid var(--line-strong);
+  border-radius: 7px;
+  background: var(--paper);
+  color: var(--ink);
+  padding: 8px 10px;
+}
+
+.setup-voice .list-textarea,
+.setup-claims .list-textarea {
+  min-height: 220px;
+}
+
+.setup-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.setup-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.team-form {
+  display: grid;
+  grid-template-columns: minmax(160px, 1fr) minmax(180px, 1fr) minmax(130px, 0.5fr);
+  gap: 8px;
+}
+
+.team-form input,
+.team-form select,
+.team-row select {
+  min-height: 38px;
+  border: 1px solid var(--line-strong);
+  border-radius: 7px;
+  background: #fbfcfa;
+  color: var(--ink);
+  padding: 8px 10px;
+}
+
+.team-list {
+  display: grid;
+  gap: 8px;
+}
+
+.team-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfcfa;
+  padding: 12px;
+}
+
+.team-row div {
+  display: grid;
+  gap: 4px;
+}
+
+.team-row strong {
+  color: var(--graphite);
+}
+
+.team-row span {
+  color: var(--muted);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.72rem;
+}
+
+.approval-policy-box {
+  display: grid;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfcfa;
+  padding: 12px;
+}
+
+.provider-enabled {
+  align-self: center;
+  color: var(--ink);
+  font-weight: 700;
+}
+
+.provider-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.provider-status {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.88rem;
+  line-height: 1.5;
+}
+
+.provider-status.succeeded {
+  color: #176a3a;
+}
+
+.provider-status.failed {
+  color: #8f2b18;
+}
+
+.approval-progress {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.approval-progress span {
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: #fbfcfa;
+  color: var(--muted);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.72rem;
+  padding: 6px 9px;
+}

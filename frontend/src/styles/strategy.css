@@ -1,0 +1,239 @@
+.preference-list {
+  display: grid;
+  gap: 10px;
+}
+
+.preference-row {
+  display: grid;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfcfa;
+  padding: 12px;
+}
+
+.preference-row div:first-child {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.preference-row strong {
+  color: var(--graphite);
+}
+
+.preference-row span,
+.preference-row small {
+  color: var(--muted);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.72rem;
+}
+
+.preference-row p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.4;
+}
+
+.preference-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.strategy-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(280px, 0.85fr);
+  gap: 12px;
+}
+
+.strategy-grid.secondary {
+  grid-template-columns: minmax(280px, 0.75fr) minmax(0, 1.25fr);
+}
+
+.strategy-block {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.78);
+  padding: 14px;
+}
+
+.direction-list,
+.pillar-grid,
+.topic-cloud,
+.breakdown-sections,
+.breakdown-grid {
+  display: grid;
+  gap: 10px;
+}
+
+.pillar-grid,
+.breakdown-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.breakdown-sections h3 {
+  margin: 0 0 8px;
+  color: var(--graphite);
+  font-size: 0.82rem;
+  line-height: 1.2;
+}
+
+.direction-card,
+.pillar-card,
+.breakdown-card {
+  display: grid;
+  gap: 7px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(251, 253, 252, 0.86);
+  padding: 12px;
+}
+
+.direction-card div {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.direction-card strong,
+.pillar-card strong,
+.breakdown-card strong {
+  color: var(--graphite);
+  line-height: 1.2;
+}
+
+.direction-card span,
+.pillar-card span,
+.breakdown-card span {
+  color: var(--muted);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.7rem;
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+.direction-card span {
+  flex: 0 0 auto;
+  border: 1px solid rgba(15, 159, 120, 0.28);
+  border-radius: 999px;
+  background: var(--mint);
+  color: var(--green-dark);
+  padding: 5px 8px;
+}
+
+.direction-card p,
+.pillar-card p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.direction-card small,
+.pillar-card small,
+.breakdown-card small {
+  color: var(--muted);
+  line-height: 1.4;
+}
+
+.topic-cloud {
+  align-content: start;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+}
+
+.topic-chip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 42px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: rgba(247, 252, 249, 0.86);
+  color: var(--graphite);
+  font-size: 0.86rem;
+  font-weight: 800;
+  padding: 8px 10px 8px 13px;
+}
+
+.topic-chip strong {
+  display: grid;
+  place-items: center;
+  min-width: 26px;
+  height: 26px;
+  border-radius: 999px;
+  background: var(--green);
+  color: white;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.72rem;
+}
+
+.analytics-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(120px, 1fr));
+  gap: 10px;
+}
+
+.metric-tile {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfcfa;
+  padding: 12px;
+}
+
+.metric-tile span,
+.analytics-row span {
+  color: var(--muted);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.72rem;
+}
+
+.metric-tile strong {
+  display: block;
+  margin-top: 6px;
+  color: var(--graphite);
+  font-size: 1.3rem;
+}
+
+.manual-metrics {
+  display: grid;
+  grid-template-columns: minmax(180px, 1.4fr) repeat(5, minmax(92px, 1fr)) auto;
+  gap: 8px;
+}
+
+.manual-metrics select,
+.manual-metrics input {
+  min-height: 38px;
+  border: 1px solid var(--line-strong);
+  border-radius: 7px;
+  background: #fbfcfa;
+  color: var(--ink);
+  padding: 8px 10px;
+}
+
+.analytics-posts {
+  display: grid;
+  gap: 8px;
+}
+
+.analytics-row {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfcfa;
+  padding: 12px;
+}
+
+.analytics-row strong {
+  color: var(--graphite);
+}
+
+.analytics-row p {
+  margin: 6px 0;
+  color: var(--muted);
+  line-height: 1.4;
+}

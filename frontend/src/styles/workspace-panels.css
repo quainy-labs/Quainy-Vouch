@@ -1,0 +1,146 @@
+.launchpad-panel {
+  display: grid;
+  gap: 14px;
+  border-color: var(--line-strong);
+}
+
+.review-panel {
+  padding: 18px;
+}
+
+.preference-panel {
+  display: grid;
+  gap: 14px;
+}
+
+.library-panel {
+  display: grid;
+  gap: 16px;
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.82), rgba(247, 252, 249, 0.72)),
+    rgba(255, 255, 255, 0.72);
+  backdrop-filter: blur(18px);
+}
+
+.readiness-panel {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.35fr) minmax(0, 1fr);
+  gap: 14px;
+  margin-bottom: 18px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfdfc;
+  padding: 14px;
+}
+
+.readiness-panel.strong,
+.readiness-panel.ready {
+  border-color: rgba(15, 159, 120, 0.36);
+  background: rgba(229, 245, 237, 0.58);
+}
+
+.readiness-panel.building {
+  border-color: rgba(36, 87, 214, 0.28);
+  background: rgba(231, 237, 251, 0.55);
+}
+
+.readiness-panel.blocked {
+  border-color: rgba(233, 87, 63, 0.35);
+  background: rgba(255, 232, 226, 0.36);
+}
+
+.source-availability-panel {
+  display: grid;
+  gap: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.74);
+  padding: 12px;
+}
+
+.panel,
+.view-hero,
+.workflow-card,
+.trend-form-block,
+.mini-board,
+.artifact-card,
+.trust-step,
+.source-health-tile,
+.source-guide-card,
+.source-form,
+.source-detail,
+.brief-summary,
+.brief-list,
+.calendar-day,
+.strategy-block,
+.direction-card,
+.pillar-card,
+.breakdown-card,
+.queue-row,
+.metric-tile,
+.analytics-row,
+.team-row,
+.approval-policy-box,
+.preference-row,
+.source-availability-panel {
+  box-shadow: 0 1px 0 rgba(17, 24, 23, 0.04), 0 10px 26px rgba(17, 24, 23, 0.035);
+}
+
+.brief-panel {
+  border-color: var(--line-strong);
+}
+
+.preview-panel {
+  display: grid;
+  gap: 14px;
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.88), rgba(245, 251, 248, 0.78)),
+    rgba(255, 255, 255, 0.72);
+  backdrop-filter: blur(18px);
+}
+
+.trust-timeline-panel {
+  display: grid;
+  gap: 14px;
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.86), rgba(247, 252, 249, 0.76)),
+    rgba(255, 255, 255, 0.72);
+  backdrop-filter: blur(18px);
+}
+
+.trend-panel {
+  display: grid;
+  gap: 14px;
+}
+
+.calendar-board-panel {
+  display: grid;
+  gap: 14px;
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.84), rgba(238, 248, 242, 0.74)),
+    rgba(255, 255, 255, 0.7);
+  backdrop-filter: blur(18px);
+}
+
+.strategy-panel {
+  display: grid;
+  gap: 14px;
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.9), rgba(247, 252, 249, 0.78)),
+    rgba(255, 255, 255, 0.72);
+  backdrop-filter: blur(18px);
+}
+
+.analytics-panel {
+  display: grid;
+  gap: 14px;
+}
+
+.setup-panel {
+  border-color: var(--line-strong);
+}
+
+.team-panel {
+  display: grid;
+  gap: 14px;
+}

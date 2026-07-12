@@ -1,0 +1,138 @@
+.compact {
+  padding: 14px;
+}
+
+.tag-wrap {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.app-shell {
+  min-height: 100vh;
+}
+
+.workspace {
+  display: grid;
+  grid-template-columns: minmax(240px, 300px) minmax(0, 1fr);
+  gap: 18px;
+  padding: 18px;
+}
+
+.panel {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--paper);
+  box-shadow: 0 1px 0 rgba(17, 24, 23, 0.04);
+}
+
+.panel:not(.band) {
+  padding: 16px;
+}
+
+.view-hero {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  min-height: 112px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: linear-gradient(135deg, #ffffff 0%, #eef8f2 100%);
+  padding: 20px;
+}
+
+.view-hero h2 {
+  margin: 3px 0 8px;
+  color: var(--graphite);
+  font-size: 1.55rem;
+  line-height: 1.12;
+}
+
+.view-hero > span {
+  flex: 0 0 auto;
+  border: 1px solid var(--green);
+  border-radius: 999px;
+  background: var(--paper);
+  color: var(--green-dark);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.76rem;
+  font-weight: 600;
+  padding: 8px 11px;
+}
+
+.band {
+  padding: 18px;
+}
+
+.panel-title,
+.section-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.panel-title {
+  justify-content: flex-start;
+  margin-bottom: 12px;
+}
+
+.section-heading {
+  margin-bottom: 14px;
+}
+
+.section-heading h2 {
+  margin-top: 3px;
+  font-size: 1.25rem;
+}
+
+.icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 38px;
+  gap: 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: 7px;
+  background: var(--paper);
+  color: var(--ink);
+  font-weight: 700;
+  padding: 8px 12px;
+}
+
+.icon-button.primary {
+  border-color: var(--green);
+  background: var(--green);
+  color: white;
+}
+
+.icon-button:disabled {
+  cursor: wait;
+  opacity: 0.7;
+}
+
+.panel:not(.band),
+.band {
+  border-color: #d8e2dc;
+}
+
+.view-hero {
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.96) 0%, rgba(238, 248, 242, 0.96) 100%),
+    radial-gradient(circle at 100% 0%, rgba(36, 87, 214, 0.08), transparent 36%);
+}
+
+.icon-button {
+  border-radius: 8px;
+  transition: transform 140ms ease, box-shadow 140ms ease, border-color 140ms ease, background-color 140ms ease;
+}
+
+.icon-button:hover:not(:disabled) {
+  border-color: var(--green);
+  box-shadow: 0 0 0 4px var(--focus-ring);
+}
+
+.icon-button.primary {
+  box-shadow: 0 10px 20px rgba(15, 159, 120, 0.16);
+}
