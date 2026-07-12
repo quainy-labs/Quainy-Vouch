@@ -61,12 +61,16 @@ def test_same_brief_generates_supported_social_posts():
     assert reddit["content_type"] == "post"
     assert instagram["content_type"] == "post"
     assert reddit["generation_metadata"]["prompt_version"] == "reddit_post.v1"
-    assert "Subreddit fit:" in reddit["body"]
-    assert "Discussion question:" in reddit["body"]
+    assert "Subreddit fit:" not in reddit["body"]
+    assert "Title:" not in reddit["body"]
+    assert reddit["body"].count("?") >= 1
+    assert "Question for the community:" not in reddit["body"]
     assert instagram["generation_metadata"]["prompt_version"] == "instagram_post.v1"
-    assert "Visual direction:" in instagram["body"]
-    assert "Post copy:" in instagram["body"]
-    assert "Hashtags:" in instagram["body"]
+    assert "Visual direction:" not in instagram["body"]
+    assert "Post copy:" not in instagram["body"]
+    assert "Hashtags:" not in instagram["body"]
+    assert "Trust cue:" not in instagram["body"]
+    assert instagram["hashtags"]
 
     old_blog = client.post(f"/briefs/{brief['id']}/drafts?platform=blog&content_type=outline")
     old_newsletter = client.post(f"/briefs/{brief['id']}/drafts?platform=newsletter&content_type=email")

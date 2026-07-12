@@ -231,7 +231,7 @@ def title_from_pillar(pillar: str) -> str:
     title = pillar.strip().capitalize()
     if not title:
         title = "Approved company knowledge"
-    return f"Share Quainy's point of view on {title}"
+    return f"Share the organization's point of view on {title}"
 
 
 def freshness_score(sources: list[Source], source_ids: list[str]) -> float:

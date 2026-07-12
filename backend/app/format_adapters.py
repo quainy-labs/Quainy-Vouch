@@ -16,10 +16,11 @@ class LinkedInCompanyPostAdapter:
     rules = [
         "Render as a LinkedIn company post between 600 and 1,500 characters.",
         "Use short paragraphs for scanability.",
-        "Keep the tone professional, specific, and human-approved.",
+        "Lead with a point of view or operating tension, then earn trust with source-backed detail.",
+        "Keep the tone professional, specific, and human-approved without sounding like a template.",
         "Use only claims present in the brief or approved company profile.",
         "Do not invent unsupported metrics, customer counts, revenue, percentages, or growth claims.",
-        "Avoid clickbait, hype, and generic AI-product framing.",
+        "Avoid clickbait, hype, generic AI-product framing, and visible planning labels.",
     ]
 
     def generation_spec(self, brief: ContentBrief) -> DraftGenerationSpec:
@@ -36,6 +37,8 @@ class LinkedInCompanyPostAdapter:
                 "max_characters": 1500,
                 "min_characters": 600,
                 "preferred_paragraphs": "4-6",
+                "visible_body_contract": "public LinkedIn copy only; no section headings or planning notes",
+                "trust_pattern": "hook, audience relevance, source-backed proof, practical takeaway",
             },
         )
 
@@ -54,8 +57,8 @@ class LinkedInCompanyPostAdapter:
         opportunity: ContentOpportunity,
     ) -> RenderedDraft:
         supporting = brief.supporting_points or [opportunity.summary]
-        proof = clean_public_sentence(supporting[0], 280)
-        second_proof = clean_public_sentence(supporting[1], 220) if len(supporting) > 1 else ""
+        proof = clean_linkedin_proof_sentence(supporting[0], 280)
+        second_proof = clean_linkedin_proof_sentence(supporting[1], 220) if len(supporting) > 1 else ""
         key_message = clean_key_message(brief.key_message)
         topic_label = public_topic_label(brief.key_message)
         audience = concise_audience(brief.audience or profile.audience)
@@ -67,26 +70,26 @@ class LinkedInCompanyPostAdapter:
         )
         if variant.style == "reflective":
             hook = f"{audience.capitalize()} do not need another vague update. They need a useful operating signal."
-            angle = f"The signal here is about {topic_label.lower()}."
+            angle = f"The signal here is about {topic_label.lower()}, but the post only works if the proof stays visible."
         elif variant.style == "direct":
             hook = direct_hook(topic_label, preferred_clean)
             angle = f"This matters for {audience} because the evidence points to a concrete operating decision, not a broad claim."
         else:
             hook = practical_hook(topic_label, preferred_clean)
-            angle = f"For {audience}, that lesson becomes useful when it is specific enough to act on."
+            angle = f"For {audience}, the useful part is not another announcement. It is seeing what the team can actually support."
 
         paragraphs = [
             hook,
             angle,
-            company_line,
-            f"The useful detail: {proof}",
+            f"{company_line} That is the bar for the way we talk about the work too.",
+            proof,
         ]
         if second_proof and second_proof != proof:
-            paragraphs.append(f"Another detail matters: {second_proof}")
+            paragraphs.append(second_proof)
         if preferred_clean:
-            paragraphs.append(f"The takeaway: stay focused on {preferred_clean}, and keep the story grounded in what the organization can actually support.")
+            paragraphs.append(f"For us, {preferred_clean} means making the proof visible, keeping the claim narrow, and letting the work carry the message.")
         else:
-            paragraphs.append("The takeaway: keep the story narrow, useful, and grounded in what the organization can actually support.")
+            paragraphs.append("The useful move is simple: make the proof visible, keep the claim narrow, and let the work carry the message.")
 
         body = "\n\n".join(paragraphs)
         return RenderedDraft(body=body[:1500], hook=hook, hashtags=linkedin_hashtags(profile, brief))
@@ -117,11 +120,12 @@ class RedditPostAdapter:
     adapter_version = "1.0.0"
     prompt_version = prompt_versions.version("reddit_post")
     rules = [
-        "Render as a Reddit post with a plain title, body, and discussion question.",
+        "Render as a Reddit post where the hook field is the title and the body reads like a real community post.",
         "Use community-aware, non-promotional language.",
-        "Avoid hashtags, corporate announcement tone, and hard selling.",
+        "Avoid hashtags, markdown headline formatting, corporate announcement tone, hard selling, and visible planning labels.",
+        "Do not invent a first-person user story or pretend the author personally built the project.",
         "Preserve only source-backed claims from the platform-independent brief.",
-        "Make the post useful enough to invite comments without engagement bait.",
+        "Share a specific situation, what the source-backed detail changes, and one honest discussion question.",
     ]
 
     def generation_spec(self, brief: ContentBrief) -> DraftGenerationSpec:
@@ -135,8 +139,10 @@ class RedditPostAdapter:
             rules=self.rules,
             metadata={
                 "brief_prompt_version": brief.prompt_version,
-                "structure": "title, subreddit_fit, body, discussion_question",
-                "avoid": "hashtags, sales copy, generic announcement language",
+                "hook_field": "reddit title",
+                "visible_body_contract": "community post body only; no markdown headline, Title/Subreddit fit/Post body labels, or promotional copy",
+                "structure": "practical context, source-backed detail, tradeoff, honest discussion question",
+                "avoid": "hashtags, sales copy, invented first-person story, corporate announcement tone, generic engagement bait",
             },
         )
 
@@ -155,47 +161,46 @@ class RedditPostAdapter:
         opportunity: ContentOpportunity,
     ) -> RenderedDraft:
         supporting = brief.supporting_points or [opportunity.summary]
-        first = clean_public_sentence(supporting[0], 260)
-        second = clean_public_sentence(supporting[1], 220) if len(supporting) > 1 else ""
+        observation = reddit_observation_from_context(brief.key_message, " ".join(supporting))
+        tradeoff = reddit_tradeoff_from_context(brief.key_message, " ".join(supporting))
         audience = concise_audience(brief.audience or profile.audience)
-        title = f"{clean_key_message(brief.key_message)}"
+        title = reddit_title_from_brief(brief.key_message)
         if variant.style == "caution":
-            opening = "One thing I keep seeing: public posts get weaker when they move faster than the evidence behind them."
-            question = "What check would you add before letting a draft move into review?"
+            opening = "A lab is useful when it makes the tradeoffs visible, not when it promises a shortcut."
+            question = "What would you want a beginner-facing lab to prove before you would trust it?"
         elif variant.style == "practical":
-            opening = f"A practical pattern for {audience}: start with approved context, then decide the format."
-            question = "Where do you usually draw the line between useful context and too much detail?"
+            opening = f"For {audience}, the interesting part is whether the exercise helps people reason through the work, not just finish it."
+            question = "Where do you usually draw the line between moving fast and understanding the tradeoff?"
         else:
-            opening = f"I am thinking through this source-backed communication workflow: {brief.key_message}"
-            question = "What would make this trustworthy enough for you to review or publish?"
+            opening = "This kind of exercise seems most useful when it turns tradeoffs into something a learner can inspect."
+            question = "What makes a lab stick for you: seeing internals, writing tests, debugging failure cases, or building a capstone?"
 
         body_parts = [
-            f"Title: {title}",
-            "",
-            "Subreddit fit:",
-            "Useful for communities discussing product building, AI workflows, content operations, or source-grounded communication.",
-            "",
-            "Post body:",
             opening,
             "",
-            f"The source-backed detail: {first}",
+            observation,
         ]
-        if second and second != first:
-            body_parts.extend(["", f"Another useful detail: {second}"])
-        body_parts.extend(["", f"Discussion question: {question}"])
+        if tradeoff and tradeoff != observation:
+            body_parts.extend(["", tradeoff])
+        body_parts.extend(["", question])
         return RenderedDraft(body="\n".join(body_parts), hook=title, hashtags=[])
 
     def quality_checks(self, body: str, profile: CompanyProfile, brief: ContentBrief) -> list[str]:
         checks: list[str] = []
-        required_sections = ["Title:", "Subreddit fit:", "Post body:", "Discussion question:"]
-        if all(section in body for section in required_sections):
-            checks.append("Uses Reddit post structure with title, subreddit fit, body, and discussion question.")
+        if body.count("?") >= 1:
+            checks.append("Uses Reddit post structure with context, source-backed detail, and a discussion question.")
         else:
-            checks.append("Review Reddit post structure; expected title, subreddit fit, body, and discussion question.")
+            checks.append("Review Reddit post structure; expected context, source-backed detail, and a discussion question.")
         if "#" not in body:
             checks.append("Avoids hashtag formatting for Reddit.")
+        if not any(label in body for label in ["Title:", "Subreddit fit:", "Post body:", "Question for the community:"]):
+            checks.append("Keeps Reddit planning labels out of visible copy.")
         if not any(term in body.lower() for term in ["buy now", "sign up", "limited time"]):
             checks.append("Avoids overt promotional language.")
+        if not any(term in body.lower() for term in ["the source material points to this", "meaningful problems:", "culture into real work"]):
+            checks.append("Avoids source-dump wording in visible Reddit copy.")
+        if not re.search(r"\b[12]\.\s+[A-Z]", body):
+            checks.append("Avoids truncated numbered-list source fragments.")
         if has_unsupported_metric(body, brief):
             checks.append("Review any metric-like claim; Reddit post rules prohibit unsupported numbers or growth claims.")
         return checks
@@ -233,12 +238,106 @@ def clean_public_sentence(text: str, max_chars: int) -> str:
     return trimmed.rstrip(".") + "."
 
 
+def clean_linkedin_proof_sentence(text: str, max_chars: int) -> str:
+    clean = clean_public_sentence(text, max_chars)
+    clean = clean.replace("source grounded", "source-grounded").replace("voice consistent", "voice-consistent")
+    clean = re.sub(
+        r"^([A-Z][\w .'-]{2,80}?\s+(?:is|are)\s+[^.]{8,160}\.)\s+\1\s+",
+        r"\1 ",
+        clean,
+        flags=re.IGNORECASE,
+    )
+    clean = re.sub(
+        r"^([A-Z][\w .'-]{2,80}?)\s+is\s+([^.]{8,160}\.)\s+\1\s+is\s+",
+        r"\1 is \2 It is ",
+        clean,
+        count=1,
+    )
+    return clean
+
+
 def clean_key_message(text: str) -> str:
     clean = re.sub(r"\s+", " ", text).strip()
     clean = re.sub(r"^Turn\s+(.+?)\s+into\s+a\s+source-backed\s+update$", r"Share the useful lesson from \1", clean, flags=re.IGNORECASE)
     clean = re.sub(r"^Explain\s+what\s+(.+?)\s+shows\s+about\s+", r"What \1 shows about ", clean, flags=re.IGNORECASE)
     clean = re.sub(r"^Share\s+a\s+practical\s+point\s+of\s+view\s+on\s+(.+)$", r"What the approved context shows about \1", clean, flags=re.IGNORECASE)
     return clean[:180].rstrip(" .") or "Share one useful lesson from approved company context"
+
+
+def reddit_title_from_brief(text: str) -> str:
+    clean = clean_key_message(text)
+    lowered = clean.lower()
+    if is_learning_context(lowered):
+        subject = "Python exercise" if "python" in lowered else "hands-on learning path"
+        return f"What makes a {subject} useful beyond just finishing it?"
+    clean = re.sub(r"^Get hands-on with\s+", "", clean, flags=re.IGNORECASE)
+    clean = re.sub(r"^Build\s+", "What is a practical way to build ", clean, flags=re.IGNORECASE)
+    if not clean.endswith("?") and any(term in lowered for term in ["lesson", "learn", "principles", "tradeoff", "workflow"]):
+        clean = f"What would you check before trusting {clean[0].lower() + clean[1:]}?"
+    return clean[:140].rstrip(" .")
+
+
+def reddit_observation_from_context(key_message: str, supporting_text: str) -> str:
+    combined = f"{key_message} {supporting_text}".lower()
+    if is_learning_context(combined) and any(term in combined for term in ["test", "tradeoff", "internals", "implementation"]):
+        return (
+            "The useful angle is not finishing the exercise faster. It is whether the work connects concepts, implementation, "
+            "tests, and tradeoffs instead of treating each topic as a separate checklist."
+        )
+    if is_learning_context(combined):
+        return "The useful angle is whether a lab makes the reasoning visible enough for someone else to inspect and challenge."
+    return "The useful angle is whether the exercise makes the underlying reasoning visible, not just whether it produces a finished result."
+
+
+def reddit_tradeoff_from_context(key_message: str, supporting_text: str) -> str:
+    combined = f"{key_message} {supporting_text}".lower()
+    if "speed" in combined and "reliability" in combined:
+        return "That feels like the real tradeoff: move fast enough to learn, but slowly enough that mistakes become inspectable."
+    if "capstone" in combined or "testing" in combined or "internals" in combined:
+        return "A capstone can help, but only if it forces choices: what to test, what to simplify, and what to understand before adding more AI."
+    return "That feels like the real test: whether the learner can explain the decision they made, not just show the output."
+
+
+def instagram_caption_message(text: str) -> str:
+    clean = clean_key_message(text)
+    lowered = clean.lower()
+    if is_learning_context(lowered):
+        return "The useful part is not finishing the exercise. It is seeing the choices behind the work."
+    if "product judgment" in lowered:
+        return "Product judgment is deciding what is worth building before AI makes building faster."
+    if "approved context" in lowered or "source-backed" in lowered:
+        return "Better content starts with proof the team can actually support."
+    match = re.match(r"^What\s+.+?\s+shows\s+about\s+(.+)$", clean, flags=re.IGNORECASE)
+    if match:
+        topic = match.group(1).strip(" .").lower()
+        return f"{topic.capitalize()} works best when the proof stays visible."
+    return clean.rstrip(".") + "."
+
+
+def instagram_proof_line(text: str) -> str:
+    clean = clean_public_sentence(text, 220)
+    lowered = clean.lower()
+    if is_learning_context(lowered) and any(term in lowered for term in ["test", "tradeoff", "internals", "implementation", "capstone"]):
+        return "The concrete standard: implementation, tests, tradeoffs, internals, and capstone work should be visible enough to inspect."
+    if "what is worth building" in lowered and "who" in lowered and "ai" in lowered:
+        return "The concrete standard: explain what is worth building, who it serves, and how AI changes the work without replacing judgment."
+    return clean
+
+
+def is_learning_context(text: str) -> bool:
+    return any(
+        marker in text
+        for marker in ["lab", "lesson", "learn", "learner", "learning", "exercise", "course", "workshop", "tutorial", "capstone"]
+    )
+
+
+def instagram_hook_for_context(variant: DraftVariant, brief: ContentBrief, proof: str) -> str:
+    combined = f"{brief.key_message} {proof}".lower()
+    if is_learning_context(combined) and any(term in combined for term in ["test", "tradeoff", "internals", "implementation"]):
+        return "A good lab makes the tradeoffs visible."
+    if "approved context" in combined or "source-backed" in combined:
+        return "Show the proof before the claim."
+    return variant.hook
 
 
 def public_topic_label(text: str) -> str:
@@ -272,7 +371,7 @@ def practical_hook(topic_label: str, preferred: str) -> str:
     if "remote" in topic and "monitoring" in topic:
         return "Remote patient monitoring works best when review and follow-up are easy to act on."
     if preferred.lower() == "build what matters":
-        return "Build what matters is only useful when it turns into visible proof."
+        return "Build what matters gets stronger when there is visible proof behind it."
     if preferred.lower() == "ship what works":
         return "Ship what works means taking the idea past the demo."
     if preferred:
@@ -283,7 +382,7 @@ def practical_hook(topic_label: str, preferred: str) -> str:
 def direct_hook(topic_label: str, preferred: str) -> str:
     topic = topic_label.lower()
     if "lab" in topic and "proof" in topic:
-        return "Quainy Labs should show the work, not just describe the philosophy."
+        return "A lab should show the work, not just describe the philosophy."
     if "production" in topic and "readiness" in topic:
         return "Production readiness is the difference between a promising demo and a useful product."
     if "product judgment" in topic:
@@ -570,8 +669,8 @@ class InstagramCaptionAdapter:
     def variants(self) -> list[DraftVariant]:
         return [
             DraftVariant("Build from what is true.", "minimal"),
-            DraftVariant("Real context makes better content.", "educational"),
-            DraftVariant("Before you post, prove it.", "direct"),
+            DraftVariant("Make the useful part easy to see.", "educational"),
+            DraftVariant("Show the proof before the claim.", "direct"),
         ]
 
     def render(
@@ -640,11 +739,12 @@ class InstagramPostAdapter:
     adapter_version = "1.0.0"
     prompt_version = prompt_versions.version("instagram_post")
     rules = [
-        "Render as an Instagram post with visual direction, post copy, and hashtags.",
-        "Lead with the visual idea and keep copy concise.",
+        "Render as a public Instagram caption only; do not include visual direction or production notes in the visible body.",
+        "Lead with a short hook, then use a trust cue and short takeaway.",
         "Use short lines rather than LinkedIn-style paragraphs.",
         "Preserve only source-backed claims from the platform-independent brief.",
-        "Keep hashtags supportive; hashtags must not carry factual claims.",
+        "Put hashtags in the hashtags field, not inside the body.",
+        "Avoid abstract source-grounding language unless it is tied to a concrete proof detail.",
     ]
 
     def generation_spec(self, brief: ContentBrief) -> DraftGenerationSpec:
@@ -659,15 +759,16 @@ class InstagramPostAdapter:
             metadata={
                 "brief_prompt_version": brief.prompt_version,
                 "max_characters": 900,
-                "structure": "visual_direction, post_copy, hashtags",
+                "visible_body_contract": "public caption only; no Visual direction/Post copy/Hashtags labels",
+                "caption_pattern": "hook, source-backed trust cue, takeaway",
             },
         )
 
     def variants(self) -> list[DraftVariant]:
         return [
             DraftVariant("Build from what is true.", "minimal"),
-            DraftVariant("Real context makes better content.", "educational"),
-            DraftVariant("Before you post, prove it.", "direct"),
+            DraftVariant("Make the useful part easy to see.", "educational"),
+            DraftVariant("Show the work before the claim.", "direct"),
         ]
 
     def render(
@@ -678,31 +779,28 @@ class InstagramPostAdapter:
         opportunity: ContentOpportunity,
     ) -> RenderedDraft:
         proof = clean_public_sentence(brief.supporting_points[0] if brief.supporting_points else opportunity.summary, 260)
-        visual = "A clean visual with one approved source note, one draft card, and one review check."
+        key_message = instagram_caption_message(brief.key_message)
+        proof = instagram_proof_line(proof)
+        hook = instagram_hook_for_context(variant, brief, proof)
         if variant.style == "educational":
-            copy = (
-                f"{variant.hook}\n\n"
-                f"{brief.key_message}\n\n"
-                "The useful part is knowing what is approved, source-backed, and ready for review.\n\n"
-                f"Source-backed note: {proof}"
+            body = (
+                f"{hook}\n\n"
+                f"{key_message}\n\n"
+                f"{proof}\n\n"
+                "That is the difference between a completed exercise and a learning artifact someone can actually trust."
             )
         elif variant.style == "direct":
-            copy = (
-                f"{variant.hook}\n\n"
+            body = (
+                f"{hook}\n\n"
                 "A strong post should not outrun its evidence.\n\n"
-                f"Use approved context first. Source-backed note: {proof}"
+                f"{proof}\n\n"
+                "Use the proof first, then choose the format."
             )
         else:
-            copy = f"{variant.hook}\n\n{brief.key_message}\n\nSource-backed note: {proof}"
-        body = (
-            f"Visual direction: {visual}\n\n"
-            "Post copy:\n"
-            f"{copy}\n\n"
-            "Hashtags: #BuildInPublic #ProductJudgment #SourceBacked"
-        )
+            body = f"{hook}\n\n{key_message}\n\n{proof}"
         return RenderedDraft(
             body=body[:900],
-            hook=variant.hook,
+            hook=hook,
             hashtags=["#BuildInPublic", "#ProductJudgment", "#SourceBacked"],
         )
 
@@ -712,12 +810,10 @@ class InstagramPostAdapter:
             checks.append("Fits concise Instagram post guidance.")
         else:
             checks.append("Review Instagram post length; this workflow expects concise copy.")
-        if body.startswith("Visual direction:") and "Post copy:" in body:
-            checks.append("Includes visual direction before Instagram post copy.")
-        if "Hashtags:" in body:
-            checks.append("Includes supportive Instagram hashtags.")
-        if "Source-backed note:" in body:
-            checks.append("Keeps Instagram post grounded with a source-backed note.")
+        if not any(label in body for label in ["Visual direction:", "Post copy:", "Hashtags:", "Trust cue:"]):
+            checks.append("Keeps Instagram post body as public caption copy.")
+        if "proof" in body.lower() or "source-backed note:" in body:
+            checks.append("Keeps Instagram post grounded with a visible proof point.")
         if has_unsupported_metric(body, brief):
             checks.append("Review any metric-like claim; Instagram post rules prohibit unsupported numbers or growth claims.")
         return checks

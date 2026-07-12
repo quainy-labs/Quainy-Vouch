@@ -25,7 +25,16 @@ class OrgSpecificProvider:
         return ModelProviderResult(
             provider=self.provider_name,
             model=self.model,
-            output={"recommendations": []},
+            output={
+                "recommendations": [
+                    {
+                        "title": "Explain how approved context supports public communication",
+                        "summary": "Approved org source material explains how source-backed public communication works for operators.",
+                        "why_now": "The approved org source is available for review and is specific enough for a public story.",
+                        "confidence": 0.86,
+                    }
+                ]
+            },
             token_usage={"total_tokens": 5},
         )
 
@@ -142,7 +151,11 @@ def test_org_specific_provider_metadata_is_used_for_generation(monkeypatch):
         json={
             "source_type": "manual_note",
             "title": "Approved org source",
-            "raw_text": "Approved context supports source-backed public communication. " * 8,
+            "raw_text": (
+                "Approved org source material explains how source-backed public communication works for operators. "
+                "The source is available for review and contains specific context for a public story. "
+            )
+            * 4,
             "approval_status": "approved",
         },
     ).raise_for_status()

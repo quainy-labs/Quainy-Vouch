@@ -139,7 +139,6 @@ class OpportunityGenerator:
         for chunk in approved_chunks:
             chunks_by_source.setdefault(chunk.source_id, []).append(chunk)
 
-        pillars = profile.content_pillars or ["approved context", "source-backed communication", "human approval"]
         opportunities: list[ContentOpportunity] = []
         seen_keys: set[tuple[str, tuple[str, ...]]] = set()
 
@@ -186,55 +185,10 @@ class OpportunityGenerator:
                 )
             )
 
-        for pillar in pillars[:5]:
-            evidence = retrieve_chunks(pillar, approved_chunks, limit=3)
-            if not evidence:
-                continue
-            source_ids = sorted({chunk.source_id for chunk in evidence})
-            key = (pillar.lower(), tuple(source_ids))
-            if key in seen_keys or any(source_by_id.get(source_id) is None for source_id in source_ids):
-                continue
-            relevance_score, confidence_score = self.relevance_scorer.score(pillar, evidence, profile, memory)
-            freshness_score = self.freshness_scorer.score(sources, source_ids)
-            if relevance_score < 0.52 or confidence_score < 0.55:
-                continue
-            rank_signals = self._ranking_signals(
-                pillar,
-                evidence,
-                profile,
-                memory,
-                calendar_events,
-                trend_signals,
-                freshness_score,
-                source_ids,
-            )
-            opportunities.append(
-                ContentOpportunity(
-                    organization_id=profile.organization_id,
-                    title=self._title_from_pillar(pillar),
-                    summary=summarize(evidence[0].chunk_text, 190),
-                    reason_today=self._reason_today(pillar, evidence, freshness_score, calendar_events, trend_signals),
-                    source_ids=source_ids,
-                    freshness_score=freshness_score,
-                    relevance_score=relevance_score,
-                    confidence_score=confidence_score,
-                    metadata={
-                        "generation_basis": "content_pillar",
-                        "pillar": pillar,
-                        "rank_signals": rank_signals.as_metadata(),
-                        "rank_score": rank_signals.rank_score,
-                    },
-                )
-            )
-
         return sorted(opportunities, key=self._ranking_key, reverse=True)
 
     def _context_word_count(self, chunks: list[SourceChunk]) -> int:
         return sum(len(chunk.chunk_text.split()) for chunk in chunks)
-
-    def _title_from_pillar(self, pillar: str) -> str:
-        title = self._display_topic(pillar) or "Approved company knowledge"
-        return f"Share a practical point of view on {title}"
 
     def _title_from_source(self, source: Source, topic: str, profile: CompanyProfile) -> str:
         pillar = self._best_matching_pillar(topic, profile.content_pillars)

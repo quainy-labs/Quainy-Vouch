@@ -35,7 +35,12 @@ export function BriefPanel({
           <p className="empty-results">Review the source-backed message, choose a format, then generate draft variants.</p>
         </div>
         <div className="format-actions">
-          <select value={formatChoice} onChange={(event) => onSelectContentFormat(event.target.value as FormatChoice)}>
+          <select
+            value={formatChoice}
+            onChange={(event) => onSelectContentFormat(event.target.value as FormatChoice)}
+            disabled={busy || !canEditContent}
+            title={canEditContent ? (busy ? "Format is locked while generation is running" : "Choose draft format") : permissionMessage}
+          >
             <option value="linkedin_post">LinkedIn post</option>
             <option value="reddit_post">Reddit post</option>
             <option value="instagram_post">Instagram post</option>

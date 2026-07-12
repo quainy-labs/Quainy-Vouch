@@ -45,6 +45,8 @@ def test_opportunity_generation_returns_source_backed_reasons_and_scores():
     assert "rank_signals" in opportunity["metadata"]
     assert opportunity["metadata"]["rank_signals"]["source_support"] > 0
     assert opportunity["metadata"]["rank_signals"]["rank_score"] > 0
+    assert all(item["metadata"]["generation_basis"] == "approved_source" for item in result["opportunities"])
+    assert all(not item["title"].startswith("Share a practical point of view") for item in result["opportunities"])
 
 
 def test_opportunity_generation_refuses_thin_context():

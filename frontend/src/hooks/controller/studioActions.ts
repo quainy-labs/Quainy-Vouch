@@ -23,6 +23,7 @@ export function createStudioActions(state: WorkspaceControllerState, options: St
   }
 
   function selectContentFormat(choice: FormatChoice) {
+    if (state.busy) return;
     state.setFormatChoice(choice);
     state.setDrafts([]);
     state.setSelectedDraft(null);

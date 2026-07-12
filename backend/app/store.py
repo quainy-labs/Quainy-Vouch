@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
 import secrets
 from pathlib import Path
 from typing import Any, Callable
@@ -1071,7 +1072,10 @@ class DataStore:
                 chunks,
                 model_log.provider,
             )
-        opportunities = self._merge_opportunities(model_opportunities, fallback_opportunities)
+        if model_log.provider != "deterministic" and model_log.status == ModelCallStatus.succeeded:
+            opportunities = model_opportunities
+        else:
+            opportunities = self._merge_opportunities(model_opportunities, fallback_opportunities)
         for opportunity in opportunities:
             opportunity.metadata["model_call_id"] = model_log.id
             opportunity.metadata["model_provider"] = model_log.provider
@@ -1099,6 +1103,9 @@ class DataStore:
             evidence = [chunk for chunk in lexical_retrieve_chunks(query, chunks, limit=8) if chunk.source_id in source_ids]
             evidence = self._prioritize_model_evidence(query, evidence, sources)[:4]
             if not evidence:
+                continue
+            evidence_fit, shared_terms = self._model_recommendation_evidence_fit(recommendation, evidence)
+            if evidence_fit < 0.24 or len(shared_terms) < 3:
                 continue
             recommendation_title = self._sanitize_model_title(recommendation.title.strip(), evidence)
             recommendation_summary = recommendation.summary.strip()
@@ -1128,6 +1135,7 @@ class DataStore:
                         "rank_score": rank_score,
                         "rank_signals": {
                             "source_support": round(min(1.0, len(evidence) / 4), 3),
+                            "evidence_fit": round(evidence_fit, 3),
                             "date_relevance": timeliness,
                             "trend_relevance": 0.0,
                             "audience_fit": round(relevance, 3),
@@ -1143,12 +1151,76 @@ class DataStore:
             )
         return sorted(opportunities, key=lambda opportunity: float(opportunity.metadata.get("rank_score", 0)), reverse=True)
 
+    def _model_recommendation_evidence_fit(
+        self,
+        recommendation: OpportunityRecommendation,
+        evidence: list[SourceChunk],
+    ) -> tuple[float, set[str]]:
+        query_text = " ".join([recommendation.title, recommendation.summary, recommendation.why_now])
+        query_terms = self._meaningful_opportunity_terms(query_text)
+        title_terms = self._meaningful_opportunity_terms(recommendation.title)
+        evidence_terms = self._meaningful_opportunity_terms(" ".join(chunk.chunk_text for chunk in evidence))
+        if not query_terms or not evidence_terms:
+            return 0.0, set()
+        shared_terms = query_terms & evidence_terms
+        title_shared_terms = title_terms & evidence_terms
+        query_fit = len(shared_terms) / max(len(query_terms), 1)
+        title_fit = len(title_shared_terms) / max(len(title_terms), 1) if title_terms else 0.0
+        fit = max(query_fit, (query_fit * 0.65) + (title_fit * 0.35))
+        return round(min(1.0, fit), 3), shared_terms
+
+    def _meaningful_opportunity_terms(self, text: str) -> set[str]:
+        generic_terms = {
+            "approved",
+            "artifact",
+            "brand",
+            "building",
+            "claim",
+            "claims",
+            "communication",
+            "company",
+            "concrete",
+            "content",
+            "context",
+            "current",
+            "draft",
+            "evidence",
+            "explain",
+            "fresh",
+            "grounded",
+            "human",
+            "knowledge",
+            "message",
+            "opportunity",
+            "organization",
+            "post",
+            "proof",
+            "public",
+            "publish",
+            "published",
+            "reason",
+            "review",
+            "reviewable",
+            "source",
+            "sources",
+            "story",
+            "team",
+            "timely",
+            "today",
+            "update",
+            "use",
+            "using",
+            "worth",
+            "work",
+        }
+        return {term for term in terms(text) if term not in generic_terms and len(term) >= 4}
+
     def _sanitize_model_title(self, title: str, evidence: list[SourceChunk]) -> str:
-        cleaned = title.replace("Product Vouch", "Quainy Vouch").replace("product Vouch", "Quainy Vouch")
+        cleaned = title
         evidence_text = " ".join(chunk.chunk_text for chunk in evidence).lower()
         if "launch" in cleaned.lower() and "launch" not in evidence_text:
-            if "vouch" in evidence_text:
-                return "Share Quainy Vouch as active product work"
+            if any(term in evidence_text for term in ["active product", "being built", "product work"]):
+                return "Share active product work from approved sources"
             return cleaned.replace("Launch", "Update").replace("launch", "update")
         return cleaned
 
@@ -1156,7 +1228,7 @@ class DataStore:
         selected_titles = " ".join(source.title for source in sources if source.id in source_ids).lower()
         if "published blog today" in selected_titles:
             return 1.0
-        if "vouch product" in selected_titles or "quainy vouch" in selected_titles:
+        if "vouch product" in selected_titles:
             return 0.95
         if "active products" in selected_titles:
             return 0.75
@@ -1183,29 +1255,23 @@ class DataStore:
             or "fresh off the press" in lowered
             or "new today" in lowered
         ):
-            if "product judgment in the ai era" in evidence_text:
+            if "published" in evidence_text or "blog" in evidence_text:
+                return "Approved sources identify a timely published post worth turning into a public update."
+            if any(term in evidence_text for term in ["active product", "being built", "product work"]):
                 return (
-                    "The Product Judgment in the AI Era blog was published today, making it the most timely "
-                    "approved source for a public Quainy update."
-                )
-            if "vouch" in evidence_text:
-                return (
-                    "Approved sources identify Quainy Vouch as active product work and a timely proof point "
+                    "Approved sources identify active product work as a timely proof point "
                     "for source-grounded, human-reviewed company communication."
                 )
         if lowered.strip() == now_utc().date().isoformat():
-            if "product judgment in the ai era" in evidence_text:
-                return (
-                    "The Product Judgment in the AI Era blog was published today, making it the most timely "
-                    "approved source for a public Quainy update."
-                )
-            if "vouch" in evidence_text:
-                return "Quainy Vouch is active product work in approved sources and is timely public proof of Quainy's product judgment."
+            if "published" in evidence_text or "blog" in evidence_text:
+                return "Approved sources identify a timely published post worth turning into a public update."
+            if any(term in evidence_text for term in ["active product", "being built", "product work"]):
+                return "Approved sources identify active product work as timely public proof."
         if "launch" in lowered and not any(term in evidence_text for term in ["launch", "launched", "release", "released"]):
-            if "vouch" in evidence_text:
+            if any(term in evidence_text for term in ["active product", "being built", "product work"]):
                 return (
-                    "Approved sources identify Quainy Vouch as active product work, making it a timely proof point "
-                    "for Quainy's builder-first AI ecosystem."
+                    "Approved sources identify active product work, making it a timely proof point "
+                    "for the organization's public story."
                 )
             return "Approved sources identify this as active work, making it a timely public proof point."
         unsupported_timing_terms = ["milestone", "recently reached", "this week", "new labs"]
@@ -1213,20 +1279,20 @@ class DataStore:
         if any(term in lowered for term in unsupported_timing_terms) and not any(
             term in evidence_text for term in ["milestone", "this week", "recently reached"]
         ):
-            if "vouch" in evidence_text:
+            if any(term in evidence_text for term in ["active product", "being built", "product work"]):
                 return (
-                    "Approved sources identify Quainy Vouch as active product work and a proof artifact for "
+                    "Approved sources identify active product work as a proof artifact for "
                     "source-grounded, human-reviewed company communication."
                 )
             if "labs" in evidence_text:
-                return "Approved sources identify Quainy Labs as public proof of Quainy's builder-first learning philosophy."
+                return "Approved sources identify the lab as public proof of the organization's learning approach."
             return "Approved sources identify this as active work worth turning into a public proof point."
         if any(term in lowered for term in unsupported_impact_terms):
             return "Approved sources support this as a relevant public proof point without claiming external results."
         if "shining example" in lowered or "join us" in lowered:
-            if "vouch" in evidence_text:
+            if any(term in evidence_text for term in ["active product", "being built", "product work"]):
                 return (
-                    "Approved sources connect Quainy Vouch to product judgment, production readiness, "
+                    "Approved sources connect the active product work to product judgment, production readiness, "
                     "source grounding, and human-reviewed company communication."
                 )
         return why_now
@@ -1401,15 +1467,27 @@ class DataStore:
                 recommendation = model_output.variants[min(draft_index, len(model_output.variants) - 1)]
                 draft.generation_metadata["model_recommendation"] = recommendation.model_dump(mode="json")
                 if model_log.provider != "deterministic":
-                    draft.hook = recommendation.hook
-                    draft.body = recommendation.body
-                    draft.hashtags = recommendation.hashtags
-                    draft.claims = check_claims(draft.body, self.approved_chunks(draft.organization_id))
-                    draft.duplicate_report = duplicate_check(draft.body, self.list_memory(draft.organization_id))
-                    draft.risk_report = risk_check(draft.body, self.profiles[draft.organization_id], draft.claims, draft.duplicate_report, opportunity)
-                    draft.quality_report = adapter.quality_checks(draft.body, self.profiles[brief.organization_id], brief)
-                    draft.source_map = {claim.text: claim.supporting_chunk_ids for claim in draft.claims if claim.supporting_chunk_ids}
-                    draft.generation_metadata["body_source"] = "model_recommendation"
+                    validated = self._validated_model_draft_variant(
+                        recommendation.model_dump(mode="json"),
+                        adapter,
+                        self.profiles[brief.organization_id],
+                        brief,
+                        opportunity,
+                    )
+                    if validated:
+                        draft.hook = validated["hook"]
+                        draft.body = validated["body"]
+                        draft.hashtags = validated["hashtags"]
+                        draft.claims = check_claims(draft.body, self.approved_chunks(draft.organization_id))
+                        draft.duplicate_report = duplicate_check(draft.body, self.list_memory(draft.organization_id))
+                        draft.risk_report = risk_check(draft.body, self.profiles[draft.organization_id], draft.claims, draft.duplicate_report, opportunity)
+                        draft.quality_report = adapter.quality_checks(draft.body, self.profiles[brief.organization_id], brief)
+                        draft.source_map = {claim.text: claim.supporting_chunk_ids for claim in draft.claims if claim.supporting_chunk_ids}
+                        draft.generation_metadata["body_source"] = "model_recommendation"
+                        draft.generation_metadata["model_sanitization"] = validated["notes"]
+                    else:
+                        draft.generation_metadata["body_source"] = "adapter_render"
+                        draft.generation_metadata["model_rejection_reason"] = "Model draft was generic, ungrounded, or not valid for the requested platform format."
                 else:
                     draft.generation_metadata["body_source"] = "adapter_render"
             self.drafts[draft.id] = draft
@@ -2119,7 +2197,7 @@ class DataStore:
             "Avoid unsupported claims. Prefer concrete events, launches, product work, published posts, labs, repos, "
             "or current milestones over abstract philosophy. If a recent blog, product, release, or public proof artifact "
             "appears in evidence, suggest a timely opportunity about that specific thing. "
-            "When evidence includes Quainy Vouch or a blog published today, prioritize those recommendations first. "
+            "When evidence includes a named product, recent blog, release, lab, repo, or public proof artifact, prioritize those recommendations first. "
             "Titles must be specific and public-facing, never template phrases like 'share a practical point of view'.\n"
             f"Today: {now_utc().date().isoformat()}\n"
             f"Audience: {profile.audience or 'unspecified'}\n"
@@ -2127,6 +2205,217 @@ class DataStore:
             f"Approved sources: {', '.join(source.title for source in sources[:8])}\n"
             f"Evidence:\n{evidence}"
         )
+
+    def _validated_model_draft_variant(
+        self,
+        recommendation: dict[str, Any],
+        adapter: FormatAdapter,
+        profile: CompanyProfile,
+        brief: ContentBrief,
+        opportunity: ContentOpportunity,
+    ) -> dict[str, Any] | None:
+        raw_hook = str(recommendation.get("hook") or "").strip()
+        raw_body = str(recommendation.get("body") or "").strip()
+        raw_hashtags = recommendation.get("hashtags") or []
+        hashtags = [str(tag).strip() for tag in raw_hashtags if str(tag).strip()]
+        if not raw_body:
+            return None
+
+        hook, body, hashtags, notes = self._sanitize_model_draft_for_platform(
+            raw_hook,
+            raw_body,
+            hashtags,
+            adapter.platform,
+            adapter.content_type,
+        )
+        if self._model_draft_rejection_reasons(hook, body, hashtags, adapter, profile, brief, opportunity):
+            return None
+        return {"hook": hook, "body": body, "hashtags": hashtags, "notes": notes}
+
+    def _sanitize_model_draft_for_platform(
+        self,
+        hook: str,
+        body: str,
+        hashtags: list[str],
+        platform: str,
+        content_type: str,
+    ) -> tuple[str, str, list[str], list[str]]:
+        notes: list[str] = []
+        clean = re.sub(r"\r\n?", "\n", body).strip()
+        clean = re.sub(r"\n{3,}", "\n\n", clean)
+        extracted_title = self._extract_labeled_value(clean, "Title")
+
+        if platform == "reddit":
+            if extracted_title:
+                hook = extracted_title
+                notes.append("Moved Reddit title from body into hook.")
+                clean = self._remove_labeled_section(clean, "Title", ["Subreddit fit", "Post body", "Discussion question"])
+            clean = self._remove_labeled_section(clean, "Subreddit fit", ["Post body", "Discussion question"])
+            clean = self._replace_labeled_heading(clean, "Post body", "")
+            clean = self._replace_labeled_heading(clean, "Discussion question", "")
+            clean = re.sub(r"(?m)^\s*Hashtags?:.*$", "", clean)
+            hashtags = []
+            notes.append("Removed Reddit planning labels and hashtags from visible copy.")
+        elif platform == "linkedin":
+            clean = self._replace_labeled_heading(clean, "Post body", "")
+            clean = self._replace_labeled_heading(clean, "LinkedIn post", "")
+            clean = self._remove_labeled_section(clean, "Subreddit fit", ["Post body", "Discussion question"])
+            clean = self._replace_labeled_heading(clean, "Discussion question", "")
+        elif platform == "instagram":
+            if content_type == "post":
+                clean = self._remove_labeled_section(clean, "Visual direction", ["Caption", "Post copy", "Hashtags"])
+                clean = self._replace_labeled_heading(clean, "Post copy", "")
+                clean = self._replace_labeled_heading(clean, "Caption", "")
+                clean = self._replace_labeled_heading(clean, "Trust cue", "The trust comes from the proof: ")
+                clean = re.sub(r"(?im)^\s*Hashtags?:.*$", "", clean)
+                notes.append("Removed Instagram planning labels from visible caption.")
+
+        clean = re.sub(r"[ \t]+\n", "\n", clean).strip()
+        clean = re.sub(r"\n{3,}", "\n\n", clean)
+        hook = hook or extracted_title or self._first_meaningful_line(clean)
+        return hook.strip()[:180], clean, hashtags, notes
+
+    def _extract_labeled_value(self, body: str, label: str) -> str | None:
+        match = re.search(rf"(?im)^\s*{re.escape(label)}\s*:\s*(.+?)\s*$", body)
+        return match.group(1).strip() if match else None
+
+    def _remove_labeled_section(self, body: str, label: str, next_labels: list[str]) -> str:
+        next_pattern = "|".join(re.escape(next_label) for next_label in next_labels)
+        if next_pattern:
+            pattern = rf"(?ims)^\s*{re.escape(label)}\s*:.*?(?=^\s*(?:{next_pattern})\s*:|\Z)"
+        else:
+            pattern = rf"(?ims)^\s*{re.escape(label)}\s*:.*?\Z"
+        return re.sub(pattern, "", body).strip()
+
+    def _replace_labeled_heading(self, body: str, label: str, replacement: str) -> str:
+        return re.sub(rf"(?im)^[ \t]*{re.escape(label)}[ \t]*:[ \t]*", replacement, body)
+
+    def _first_meaningful_line(self, body: str) -> str:
+        for line in body.splitlines():
+            clean = line.strip(" -")
+            if clean and not clean.endswith(":"):
+                return clean
+        return "Review this source-backed draft"
+
+    def _model_draft_rejection_reasons(
+        self,
+        hook: str,
+        body: str,
+        hashtags: list[str],
+        adapter: FormatAdapter,
+        profile: CompanyProfile,
+        brief: ContentBrief,
+        opportunity: ContentOpportunity,
+    ) -> list[str]:
+        reasons: list[str] = []
+        lowered = body.lower()
+        combined = f"{hook} {body}".lower()
+        if len(body.split()) < 18:
+            reasons.append("too_short")
+        if any(marker in lowered for marker in ["required structure", "adapter rules", "as an ai", "model-written", "insert ", "[", "]"]):
+            reasons.append("prompt_or_template_leak")
+        generic_markers = [
+            "source-backed communication opportunity",
+            "approved source context is available",
+            "turn approved context into",
+            "use approved context to draft",
+            "generic cross-platform draft",
+            "reviewable update",
+        ]
+        if any(marker in combined for marker in generic_markers):
+            reasons.append("generic_model_text")
+
+        evidence_chunks = [chunk for chunk in self.approved_chunks(brief.organization_id) if chunk.source_id in brief.source_ids]
+        evidence_text = " ".join([*brief.supporting_points, opportunity.summary, *(chunk.chunk_text for chunk in evidence_chunks)])
+        evidence_terms = terms(evidence_text) - {"source", "backed", "approved", "context", "content", "post", "draft", "review"}
+        body_terms = terms(f"{hook} {body}") - {"source", "backed", "approved", "context", "content", "post", "draft", "review"}
+        if evidence_terms and len(evidence_terms & body_terms) < min(3, max(2, len(evidence_terms) // 12)):
+            reasons.append("not_enough_source_overlap")
+
+        forbidden_phrases = [phrase.lower() for phrase in [*profile.banned_phrases, *profile.forbidden_claims, *brief.do_not_say] if phrase]
+        if any(phrase in lowered for phrase in forbidden_phrases):
+            reasons.append("forbidden_phrase")
+
+        if adapter.platform == "reddit":
+            if hashtags or "#" in body:
+                reasons.append("reddit_hashtags")
+            if any(marker in lowered for marker in ["visual direction:", "caption:", "linkedin", "company post"]):
+                reasons.append("wrong_platform_for_reddit")
+            if "?" not in body:
+                reasons.append("reddit_missing_discussion_question")
+            if re.search(r"(?m)^\s*\*\*.+\*\*\s*$", body):
+                reasons.append("reddit_markdown_headline")
+            reddit_promo_markers = [
+                "build production-ready",
+                "get hands-on with",
+                "secure company communication made easy",
+                "should we prioritize speed or reliability",
+                "what's your experience",
+                "what's the value of this capability-building path",
+                "what truly matters",
+                "turn our culture into real work",
+                "as ai leverages grow",
+                "ever wondered",
+                "read more about",
+                "start building",
+                "enhances productivity",
+                "ai-powered projects",
+            ]
+            reddit_invented_voice_markers = [
+                "as i built",
+                "i built my first",
+                "helped me understand",
+                "i recently stumbled upon",
+            ]
+            if any(marker in combined for marker in ["sign up", "book a demo", "buy now", "limited time", *reddit_promo_markers]):
+                reasons.append("reddit_sales_tone")
+            if any(marker in combined for marker in reddit_invented_voice_markers):
+                reasons.append("reddit_invented_first_person")
+        elif adapter.platform == "linkedin":
+            if any(marker in lowered for marker in ["subreddit fit", "visual direction:", "caption:", "post copy:"]):
+                reasons.append("wrong_platform_for_linkedin")
+            if body.count("\n\n") < 2:
+                reasons.append("linkedin_needs_short_paragraphs")
+        elif adapter.platform == "instagram":
+            if len(body) > 1100:
+                reasons.append("instagram_too_long")
+            if adapter.content_type == "post" and any(label in body for label in ["Visual direction:", "Post copy:", "Hashtags:"]):
+                reasons.append("instagram_visible_planning_label")
+            if adapter.content_type == "post" and "\n\n" not in body and len(body.split()) > 38:
+                reasons.append("instagram_long_single_paragraph")
+            normalized_key_message = re.sub(r"\W+", " ", brief.key_message).strip().lower()
+            normalized_lines = {re.sub(r"\W+", " ", line).strip().lower() for line in body.splitlines()}
+            if adapter.content_type == "post" and normalized_key_message and normalized_key_message in normalized_lines:
+                reasons.append("instagram_restates_brief_title")
+            instagram_announcement_markers = [
+                "published blog today:",
+                "our latest blog post",
+                "latest blog post explores",
+                "shows that",
+                "is crucial to creating successful",
+                "harness the power of ai",
+            ]
+            if adapter.content_type == "post" and any(marker in lowered for marker in instagram_announcement_markers):
+                reasons.append("instagram_announcement_prose")
+            if adapter.content_type == "post" and re.search(r"\bat\s+[\w .'-]{2,40},\s+we believe\b", body, flags=re.IGNORECASE):
+                reasons.append("instagram_announcement_prose")
+            instagram_source_dump_markers = [
+                "real context makes better content",
+                "get hands-on with",
+                "culture into real work",
+                "read more about",
+                "start building",
+                "enhances productivity",
+                "ai-powered projects",
+            ]
+            if adapter.content_type == "post" and any(marker in combined for marker in instagram_source_dump_markers):
+                reasons.append("instagram_source_dump_or_promo")
+            if "subreddit fit" in lowered or "linkedin" in lowered:
+                reasons.append("wrong_platform_for_instagram")
+
+        if any("unsupported" in check.lower() for check in adapter.quality_checks(body, profile, brief)):
+            reasons.append("unsupported_metric")
+        return reasons
 
     def _brief_prompt(
         self,
@@ -2170,8 +2459,9 @@ class DataStore:
             "Generate reviewable draft variants as JSON for the exact platform and content type below. "
             "The response must match DraftRecommendationSet with exactly 3 distinct variants containing hook, body, and hashtags. "
             "Use the brief, adapter rules, adapter metadata, approved source evidence, and platform style. "
-            "Keep every claim source-grounded, cautious, and easy for a human reviewer to edit. "
-            "Do not produce a generic cross-platform draft.\n"
+            "Keep every claim source-grounded, cautious, and easy for a human reviewer to edit. The body must be the actual "
+            "visible draft text for that platform, not notes about what to write. Do not include internal planning labels, "
+            "instructions, placeholders, or generic cross-platform copy. Use at least one concrete detail from the evidence.\n"
             f"Platform: {platform}\n"
             f"Content type: {content_type}\n"
             f"Audience: {profile.audience or brief.audience}\n"
@@ -2186,9 +2476,9 @@ class DataStore:
             f"Rules: {' | '.join(generation_spec.get('rules', [])[:10])}\n"
             f"Required structure/style metadata: {metadata}\n"
             "Platform specifics:\n"
-            "- LinkedIn post: professional company update, short paragraphs, no unsupported metrics, useful takeaway.\n"
-            "- Reddit post: title, subreddit fit, body, discussion question, no hashtags, no sales tone, invite useful discussion.\n"
-            "- Instagram post: visual direction first, concise post copy, supportive hashtags, short lines, no long LinkedIn pacing.\n"
+            "- LinkedIn company post: hook in the hook field; body uses 3-6 short public paragraphs, a trust-building detail, and a practical takeaway. Do not include section headings.\n"
+            "- Reddit post: hook is the Reddit title; body reads like a community discussion with practical context, a source-backed detail, and one honest question. No markdown headline in the body, no hashtags, no sales tone, no invented first-person experience, no 'what's your experience' engagement bait, no corporate announcement voice, and no subreddit-fit notes.\n"
+            "- Instagram post: body is the public caption only. Do not include Visual direction, Post copy, Caption, or Hashtags labels. Use short lines, a clear hook, one proof/trust sentence, and put hashtags only in the hashtags array. Do not summarize a blog post in one paragraph, do not start with the source title, and avoid phrases like 'our latest blog post explores' or 'At {brand}, we believe'.\n"
             f"Evidence:\n{evidence[:2200]}"
         )
 

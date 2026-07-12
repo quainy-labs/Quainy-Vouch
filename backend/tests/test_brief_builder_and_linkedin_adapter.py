@@ -93,6 +93,60 @@ def test_linkedin_adapter_exposes_generation_spec_and_metric_guardrail():
     assert "45%" not in body
 
 
+def test_linkedin_adapter_avoids_visible_template_scaffolding():
+    profile = CompanyProfile(
+        organization_id="org_linkedin_voice",
+        audience="students, developers, founders, curious learners, and one-person builders",
+        preferred_phrases=["Build what matters"],
+        product_summary="Quainy helps builders turn meaningful ideas into production-ready products.",
+    )
+    opportunity = ContentOpportunity(
+        organization_id="org_linkedin_voice",
+        title="Behind the Scenes of Quainy Vouch: Secure Company Communication Made Easy",
+        summary="Quainy Vouch supports source-grounded public communication.",
+        reason_today="Approved source detail exists.",
+        source_ids=["src_linkedin_voice"],
+        freshness_score=0.8,
+        relevance_score=0.8,
+        confidence_score=0.8,
+    )
+    brief = PlatformIndependentBriefBuilder().build(
+        profile,
+        opportunity,
+        [
+            SourceChunk(
+                source_id="src_linkedin_voice",
+                organization_id="org_linkedin_voice",
+                chunk_text=(
+                    "Quainy Vouch is an active Quainy product being built now. "
+                    "Quainy Vouch is a secure, source grounded company communication agent. "
+                    "It helps teams turn approved company knowledge into timely, accurate, voice consistent content across platforms, "
+                    "with human approval before publishing."
+                ),
+                chunk_index=0,
+            ),
+            SourceChunk(
+                source_id="src_linkedin_voice",
+                organization_id="org_linkedin_voice",
+                chunk_text=(
+                    "Quainy public content should help builders think better and build better. "
+                    "It should start from real problems, first principles, product judgment, engineering clarity, and production readiness."
+                ),
+                chunk_index=1,
+            ),
+        ],
+    )
+    rendered = LinkedInCompanyPostAdapter().render(LinkedInCompanyPostAdapter().variants()[0], profile, brief, opportunity)
+
+    assert "One concrete detail" not in rendered.body
+    assert "A second detail" not in rendered.body
+    assert "The takeaway" not in rendered.body
+    assert "The approved context is specific" not in rendered.body
+    assert "Quainy Vouch is an active Quainy product being built now. Quainy Vouch is" not in rendered.body
+    assert "source-grounded" in rendered.body
+    assert "voice-consistent" in rendered.body
+
+
 def test_blog_outline_adapter_uses_same_brief_with_headings_and_source_sections():
     profile = CompanyProfile(
         organization_id="org_blog",
@@ -273,13 +327,120 @@ def test_reddit_and_instagram_post_adapters_are_supported_public_formats():
     assert reddit_adapter.generation_spec(brief).platform == "reddit"
     assert reddit_adapter.generation_spec(brief).content_type == "post"
     assert reddit_adapter.generation_spec(brief).prompt_version == "reddit_post.v1"
-    assert "Subreddit fit:" in reddit.body
-    assert "Discussion question:" in reddit.body
+    assert reddit.body.count("?") >= 1
+    assert "Subreddit fit:" not in reddit.body
+    assert "Title:" not in reddit.body
+    assert "Question for the community:" not in reddit.body
     assert "#" not in reddit.body
     assert any("Reddit post structure" in check for check in reddit_checks)
+    assert any("planning labels" in check for check in reddit_checks)
     assert instagram_adapter.generation_spec(brief).platform == "instagram"
     assert instagram_adapter.generation_spec(brief).content_type == "post"
     assert instagram_adapter.generation_spec(brief).prompt_version == "instagram_post.v1"
-    assert instagram.body.startswith("Visual direction:")
-    assert "Post copy:" in instagram.body
+    assert instagram.body.startswith("Show the proof before the claim.")
+    assert "Visual direction:" not in instagram.body
+    assert "Post copy:" not in instagram.body
+    assert "Hashtags:" not in instagram.body
+    assert "Trust cue:" not in instagram.body
+    assert instagram.hashtags
     assert any("Instagram post" in check for check in instagram_checks)
+
+
+def test_reddit_adapter_paraphrases_labs_context_instead_of_dumping_source_blocks():
+    profile = CompanyProfile(
+        organization_id="org_reddit_labs",
+        audience="students, developers, founders, curious learners, and one-person builders",
+        content_pillars=["Python First Principles", "Quainy Labs"],
+    )
+    opportunity = ContentOpportunity(
+        organization_id="org_reddit_labs",
+        title="Get Hands-on with Quainy Labs' Python First Principles",
+        summary="Python First Principles helps learners reason through Python and engineering tradeoffs.",
+        reason_today="Approved lab context is available.",
+        source_ids=["src_reddit_labs"],
+        freshness_score=0.8,
+        relevance_score=0.8,
+        confidence_score=0.8,
+    )
+    brief = PlatformIndependentBriefBuilder().build(
+        profile,
+        opportunity,
+        [
+            SourceChunk(
+                source_id="src_reddit_labs",
+                organization_id="org_reddit_labs",
+                chunk_text=(
+                    "Quainy Labs are public, inspectable learning paths that turn Quainy's culture into real work. "
+                    "Python First Principles helps learners understand Python deeply through first principles reasoning, "
+                    "implementation, testing, tradeoffs, internals, software engineering, ecosystem knowledge, and capstone projects."
+                ),
+                chunk_index=0,
+            ),
+            SourceChunk(
+                source_id="src_reddit_labs",
+                organization_id="org_reddit_labs",
+                chunk_text=(
+                    "Quainy is currently organized around three public systems: 1. Meaningful Problems: a dedicated library "
+                    "for understanding what is worth solving, who it affects, and why a product should exist. 2. Labs."
+                ),
+                chunk_index=1,
+            ),
+        ],
+    )
+    reddit = RedditPostAdapter().render(RedditPostAdapter().variants()[0], profile, brief, opportunity)
+    lowered = reddit.body.lower()
+
+    assert "quainy labs are public" not in lowered
+    assert "turn quainy's culture into real work" not in lowered
+    assert "meaningful problems:" not in lowered
+    assert "1." not in reddit.body
+    assert "2." not in reddit.body
+    assert "checklist" in lowered
+    assert "what makes a lab stick for you" in lowered
+
+
+def test_instagram_adapter_turns_labs_context_into_caption_instead_of_source_dump():
+    profile = CompanyProfile(
+        organization_id="org_instagram_labs",
+        audience="students, developers, founders, curious learners, and one-person builders",
+        content_pillars=["Python First Principles", "Quainy Labs"],
+    )
+    opportunity = ContentOpportunity(
+        organization_id="org_instagram_labs",
+        title="Get Hands-on with Quainy Labs' Python First Principles",
+        summary="Python First Principles helps learners reason through Python and engineering tradeoffs.",
+        reason_today="Approved lab context is available.",
+        source_ids=["src_instagram_labs"],
+        freshness_score=0.8,
+        relevance_score=0.8,
+        confidence_score=0.8,
+    )
+    brief = PlatformIndependentBriefBuilder().build(
+        profile,
+        opportunity,
+        [
+            SourceChunk(
+                source_id="src_instagram_labs",
+                organization_id="org_instagram_labs",
+                chunk_text=(
+                    "Quainy Labs are public, inspectable learning paths that turn Quainy's culture into real work. "
+                    "Python First Principles helps learners understand Python deeply through first principles reasoning, "
+                    "implementation, testing, tradeoffs, internals, software engineering, ecosystem knowledge, and capstone projects."
+                ),
+                chunk_index=0,
+            )
+        ],
+    )
+    adapter = InstagramPostAdapter()
+    instagram = adapter.render(adapter.variants()[1], profile, brief, opportunity)
+    lowered = instagram.body.lower()
+
+    assert "real context makes better content" not in lowered
+    assert "get hands-on with quainy labs" not in lowered
+    assert "quainy labs are public" not in lowered
+    assert "turn quainy's culture into real work" not in lowered
+    assert "tests" in lowered
+    assert "tradeoffs" in lowered
+    assert "one grounded proof point" not in lowered
+    assert "completed exercise" in lowered
+    assert "learning artifact" in lowered

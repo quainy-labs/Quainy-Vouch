@@ -21,6 +21,8 @@ class InvalidStructuredProvider:
         schema_name: str,
         json_schema: dict[str, Any] | None = None,
     ) -> ModelProviderResult:
+        if schema_name == "OpportunityRecommendationSet":
+            raise RuntimeError("Opportunity model response was not usable.")
         return ModelProviderResult(
             provider=self.provider_name,
             model=self.model,
@@ -63,6 +65,74 @@ class OpportunityStructuredProvider:
         )
 
 
+class GenericOpportunityStructuredProvider:
+    provider_name = "generic-opportunity-test-provider"
+    model = "generic-opportunity-v1"
+
+    def generate_structured(
+        self,
+        prompt: str,
+        schema_name: str,
+        json_schema: dict[str, Any] | None = None,
+    ) -> ModelProviderResult:
+        if schema_name == "OpportunityRecommendationSet":
+            return ModelProviderResult(
+                provider=self.provider_name,
+                model=self.model,
+                output={
+                    "recommendations": [
+                        {
+                            "title": "Source-backed communication opportunity",
+                            "summary": "Approved source context is available.",
+                            "why_now": "Use approved context for a reviewable update.",
+                            "confidence": 0.72,
+                        }
+                    ]
+                },
+                token_usage={"total_tokens": 8},
+            )
+        return ModelProviderResult(
+            provider=self.provider_name,
+            model=self.model,
+            output={"recommendations": []},
+            token_usage={"total_tokens": 4},
+        )
+
+
+class IrrelevantOpportunityStructuredProvider:
+    provider_name = "irrelevant-opportunity-test-provider"
+    model = "irrelevant-opportunity-v1"
+
+    def generate_structured(
+        self,
+        prompt: str,
+        schema_name: str,
+        json_schema: dict[str, Any] | None = None,
+    ) -> ModelProviderResult:
+        if schema_name == "OpportunityRecommendationSet":
+            return ModelProviderResult(
+                provider=self.provider_name,
+                model=self.model,
+                output={
+                    "recommendations": [
+                        {
+                            "title": "Announce the new referral rewards program",
+                            "summary": "A referral rewards program can drive community growth and customer acquisition.",
+                            "why_now": "Referral campaigns are timely and can turn audience attention into signups.",
+                            "confidence": 0.88,
+                        }
+                    ]
+                },
+                token_usage={"total_tokens": 8},
+            )
+        return ModelProviderResult(
+            provider=self.provider_name,
+            model=self.model,
+            output={"recommendations": []},
+            token_usage={"total_tokens": 4},
+        )
+
+
 class SocialDraftStructuredProvider:
     provider_name = "social-draft-test-provider"
     model = "social-draft-v1"
@@ -76,22 +146,29 @@ class SocialDraftStructuredProvider:
         if schema_name == "DraftRecommendationSet":
             if "Platform: reddit" in prompt:
                 body = (
-                    "Title: Model-written Reddit post\n\n"
-                    "Subreddit fit:\nUseful for builders discussing source-grounded content.\n\n"
-                    "Post body:\nThis is the model-written Reddit body using approved context.\n\n"
-                    "Discussion question: What would you verify before publishing this?"
+                    "Title: How do you keep reviewer control visible in public stories?\n\n"
+                    "Subreddit fit:\nUseful for builders discussing content operations and source-grounded workflows.\n\n"
+                    "Post body:\nI am working through a pattern where public stories start from approved context instead of a blank prompt.\n\n"
+                    "The useful detail is reviewer control: the source stays visible, claims stay cautious, and the final lesson is operator-facing.\n\n"
+                    "Discussion question: What would you verify before publishing a workflow like this?"
                 )
-                hook = "Model-written Reddit post"
+                hook = "How do you keep reviewer control visible in public stories?"
             elif "Platform: instagram" in prompt:
                 body = (
-                    "Visual direction: A model-written source card beside a draft.\n\n"
-                    "Post copy:\nModel-written Instagram post from approved context.\n\n"
+                    "Visual direction: Show one approved source note beside a draft card with a visible reviewer check.\n\n"
+                    "Post copy:\nPublic stories work better when the proof stays visible.\n\n"
+                    "Trust cue: approved context, reviewer control, cautious claims, and source visibility all stay in the workflow.\n\n"
                     "Hashtags: #SourceBacked #ProductJudgment"
                 )
-                hook = "Model-written Instagram post"
+                hook = "Keep the proof visible."
             else:
-                body = "Model-written LinkedIn post from approved context."
-                hook = "Model-written LinkedIn post"
+                body = (
+                    "Public stories get stronger when the review path is visible.\n\n"
+                    "For founders and operators, the useful shift is starting from approved context instead of asking a blank prompt to invent the angle.\n\n"
+                    "The source-backed detail is reviewer control: source visibility, cautious claims, and operator-facing lessons stay connected before anything public is approved.\n\n"
+                    "That makes the final post easier to trust and easier for a human reviewer to improve."
+                )
+                hook = "Keep reviewer control visible."
             return ModelProviderResult(
                 provider=self.provider_name,
                 model=self.model,
@@ -112,6 +189,110 @@ class SocialDraftStructuredProvider:
                 ]
             },
             token_usage={"total_tokens": 6},
+        )
+
+
+class InstagramAnnouncementDraftProvider:
+    provider_name = "instagram-announcement-test-provider"
+    model = "instagram-announcement-v1"
+
+    def generate_structured(
+        self,
+        prompt: str,
+        schema_name: str,
+        json_schema: dict[str, Any] | None = None,
+    ) -> ModelProviderResult:
+        if schema_name == "DraftRecommendationSet":
+            body = (
+                "Published blog today: Product Judgment in the AI Era shows that building meaningful ideas into "
+                "production-ready products is only possible when we use AI responsibly. At Quainy, we believe that "
+                "product judgment is crucial to creating successful AI-native products. Our latest blog post explores "
+                "how builders can make informed decisions about what to build, who it should serve, and how to harness "
+                "the power of AI without losing sight of product sense."
+            )
+            return ModelProviderResult(
+                provider=self.provider_name,
+                model=self.model,
+                output={"variants": [{"hook": "Product judgment matters", "body": body, "hashtags": ["#ProductJudgment"]}]},
+                token_usage={"total_tokens": 18},
+            )
+        return ModelProviderResult(
+            provider=self.provider_name,
+            model=self.model,
+            output={"recommendations": []},
+            token_usage={"total_tokens": 4},
+        )
+
+
+class InstagramLabsPromoDraftProvider:
+    provider_name = "instagram-labs-promo-test-provider"
+    model = "instagram-labs-promo-v1"
+
+    def generate_structured(
+        self,
+        prompt: str,
+        schema_name: str,
+        json_schema: dict[str, Any] | None = None,
+    ) -> ModelProviderResult:
+        if schema_name == "DraftRecommendationSet":
+            body = (
+                "Real context makes better content.\n\n"
+                "Get Hands-on with Quainy Labs' Python First Principles.\n\n"
+                "The trust comes from the proof: Quainy Labs are public, inspectable learning paths that turn "
+                "Quainy's culture into real work. Python First Principles helps learners understand Python deeply "
+                "through first principles reasoning, implementation.\n\n"
+                "Read more about Quainy Labs' Python First Principles and start building capable learners today!"
+            )
+            return ModelProviderResult(
+                provider=self.provider_name,
+                model=self.model,
+                output={"variants": [{"hook": "Real context makes better content.", "body": body, "hashtags": ["#QuainyLabs"]}]},
+                token_usage={"total_tokens": 18},
+            )
+        return ModelProviderResult(
+            provider=self.provider_name,
+            model=self.model,
+            output={"recommendations": []},
+            token_usage={"total_tokens": 4},
+        )
+
+
+class RedditPromoDraftProvider:
+    provider_name = "reddit-promo-test-provider"
+    model = "reddit-promo-v1"
+
+    def generate_structured(
+        self,
+        prompt: str,
+        schema_name: str,
+        json_schema: dict[str, Any] | None = None,
+    ) -> ModelProviderResult:
+        if schema_name == "DraftRecommendationSet":
+            body = (
+                "**Build production-ready AI products with Quainy Labs**\n\n"
+                "As I built my first Quainy Lab project, Python First Principles helped me understand the importance "
+                "of testing tradeoffs in software engineering. What's your experience with tradeoff analysis? "
+                "Should we prioritize speed or reliability in our AI projects?\n\n"
+                "As AI leverages grow, we need to focus on what truly matters: product judgment, market understanding, "
+                "and architecture. Quainy Labs are public, inspectable learning paths that turn our culture into real work. "
+                "But what's the value of this capability-building path?\n\n"
+                "Ever wondered how Quainy Labs' Python First Principles helps learners build a strong foundation in software engineering? "
+                "I recently stumbled upon an excerpt from their source code, which highlighted the importance of implementing tests and understanding tradeoffs. "
+                "What's more, this approach not only enhances productivity but also enables builders to reason from problem to product. "
+                "I'm curious: How do you prioritize testing and iteration when working on AI-powered projects?\n\n"
+                "Read more about Quainy Labs' Python First Principles and start building capable learners today!"
+            )
+            return ModelProviderResult(
+                provider=self.provider_name,
+                model=self.model,
+                output={"variants": [{"hook": "Build production-ready AI products with Quainy Labs", "body": body, "hashtags": []}]},
+                token_usage={"total_tokens": 18},
+            )
+        return ModelProviderResult(
+            provider=self.provider_name,
+            model=self.model,
+            output={"recommendations": []},
+            token_usage={"total_tokens": 4},
         )
 
 
@@ -209,23 +390,228 @@ def test_grounded_model_recommendation_becomes_top_opportunity():
 
     assert opportunities[0]["title"] == "Announce the new Product Judgment in the AI Era blog"
     assert opportunities[0]["metadata"]["generation_basis"] == "model_recommendation"
+    assert all(opportunity["metadata"]["generation_basis"] == "model_recommendation" for opportunity in opportunities)
+
+
+def test_successful_llm_opportunity_call_does_not_add_deterministic_fallbacks():
+    org = create_context_org("Generic LLM Opportunity Org")
+    original_provider = store.model_provider
+    store.model_provider = GenericOpportunityStructuredProvider()
+    try:
+        opportunities = client.post(f"/organizations/{org['id']}/opportunities/generate").json()["opportunities"]
+    finally:
+        store.model_provider = original_provider
+
+    assert opportunities == []
+    calls = client.get(f"/organizations/{org['id']}/model-calls").json()
+    opportunity_call = next(call for call in calls if call["schema_name"] == "OpportunityRecommendationSet")
+    assert opportunity_call["status"] == "succeeded"
+    assert opportunity_call["provider"] == "generic-opportunity-test-provider"
+
+
+def test_source_irrelevant_llm_opportunity_is_rejected():
+    org = client.post("/organizations", json={"name": "Irrelevant LLM Opportunity Org"}).json()
+    client.patch(
+        f"/organizations/{org['id']}/profile",
+        json={
+            "audience": "education teams",
+            "content_pillars": ["learning design", "software education"],
+        },
+    ).raise_for_status()
+    client.post(
+        f"/organizations/{org['id']}/sources",
+        json={
+            "source_type": "manual_note",
+            "title": "Backend testing lab",
+            "raw_text": (
+                "The approved lab teaches learners how to design backend tests, inspect failure cases, "
+                "compare implementation tradeoffs, and explain reliability decisions before shipping code. "
+            )
+            * 4,
+            "approval_status": "approved",
+        },
+    ).raise_for_status()
+    original_provider = store.model_provider
+    store.model_provider = IrrelevantOpportunityStructuredProvider()
+    try:
+        opportunities = client.post(f"/organizations/{org['id']}/opportunities/generate").json()["opportunities"]
+    finally:
+        store.model_provider = original_provider
+
+    assert opportunities == []
+    calls = client.get(f"/organizations/{org['id']}/model-calls").json()
+    opportunity_call = next(call for call in calls if call["schema_name"] == "OpportunityRecommendationSet")
+    assert opportunity_call["status"] == "succeeded"
+    assert opportunity_call["provider"] == "irrelevant-opportunity-test-provider"
 
 
 def test_social_draft_model_output_becomes_visible_draft_body():
     org = create_context_org("Social Draft Model Org")
+    opportunity = client.post(f"/organizations/{org['id']}/opportunities/generate").json()["opportunities"][0]
+    brief = client.post(f"/opportunities/{opportunity['id']}/briefs").json()
     original_provider = store.model_provider
     store.model_provider = SocialDraftStructuredProvider()
     try:
-        opportunity = client.post(f"/organizations/{org['id']}/opportunities/generate").json()["opportunities"][0]
-        brief = client.post(f"/opportunities/{opportunity['id']}/briefs").json()
         reddit = client.post(f"/briefs/{brief['id']}/drafts?platform=reddit&content_type=post").json()["drafts"][0]
         instagram = client.post(f"/briefs/{brief['id']}/drafts?platform=instagram&content_type=post").json()["drafts"][0]
     finally:
         store.model_provider = original_provider
 
-    assert reddit["body"].startswith("Title: Model-written Reddit post")
-    assert reddit["hook"] == "Model-written Reddit post"
+    assert reddit["body"].startswith("I am working through a pattern")
+    assert "Subreddit fit:" not in reddit["body"]
+    assert reddit["hook"] == "How do you keep reviewer control visible in public stories?"
     assert reddit["generation_metadata"]["body_source"] == "model_recommendation"
-    assert instagram["body"].startswith("Visual direction: A model-written source card")
-    assert instagram["hook"] == "Model-written Instagram post"
+    assert instagram["body"].startswith("Public stories work better")
+    assert "Visual direction:" not in instagram["body"]
+    assert "Post copy:" not in instagram["body"]
+    assert "Hashtags:" not in instagram["body"]
+    assert "Trust cue:" not in instagram["body"]
+    assert "The trust comes from the proof:" in instagram["body"]
+    assert instagram["hook"] == "Keep the proof visible."
     assert instagram["generation_metadata"]["body_source"] == "model_recommendation"
+
+
+def test_instagram_announcement_prose_is_rejected_for_caption_body():
+    org = client.post("/organizations", json={"name": "Instagram Blog Caption Org"}).json()
+    client.patch(
+        f"/organizations/{org['id']}/profile",
+        json={
+            "audience": "AI builders and founders",
+            "content_pillars": ["product judgment", "AI building"],
+        },
+    ).raise_for_status()
+    client.post(
+        f"/organizations/{org['id']}/sources",
+        json={
+            "source_type": "manual_note",
+            "title": "Published blog today",
+            "raw_text": (
+                "The organization published Product Judgment in the AI Era today. "
+                "The blog explains how builders decide what is worth building, who it should serve, "
+                "what promise to make, and how to use AI without losing product sense. "
+            )
+            * 4,
+            "approval_status": "approved",
+        },
+    ).raise_for_status()
+
+    opportunity = client.post(f"/organizations/{org['id']}/opportunities/generate").json()["opportunities"][0]
+    brief = client.post(f"/opportunities/{opportunity['id']}/briefs").json()
+    original_provider = store.model_provider
+    store.model_provider = InstagramAnnouncementDraftProvider()
+    try:
+        instagram = client.post(f"/briefs/{brief['id']}/drafts?platform=instagram&content_type=post").json()["drafts"][0]
+    finally:
+        store.model_provider = original_provider
+
+    lowered = instagram["body"].lower()
+    assert instagram["generation_metadata"]["body_source"] == "adapter_render"
+    assert "model_rejection_reason" in instagram["generation_metadata"]
+    assert "published blog today:" not in lowered
+    assert "at quainy, we believe" not in lowered
+    assert "latest blog post explores" not in lowered
+    assert "harness the power of ai" not in lowered
+    assert instagram["body"].startswith("Build from what is true.")
+    assert "what is worth building" in lowered
+    assert "without replacing judgment" in lowered
+
+
+def test_instagram_labs_promo_or_source_dump_is_rejected():
+    org = client.post("/organizations", json={"name": "Instagram Labs Promo Org"}).json()
+    client.patch(
+        f"/organizations/{org['id']}/profile",
+        json={
+            "audience": "students, developers, founders, curious learners, and one-person builders",
+            "content_pillars": ["Python First Principles", "Quainy Labs"],
+        },
+    ).raise_for_status()
+    client.post(
+        f"/organizations/{org['id']}/sources",
+        json={
+            "source_type": "manual_note",
+            "title": "Python First Principles",
+            "raw_text": (
+                "Quainy Labs are public, inspectable learning paths that turn Quainy's culture into real work. "
+                "Python First Principles helps learners understand Python deeply through first principles reasoning, "
+                "implementation, testing, tradeoffs, internals, software engineering, ecosystem knowledge, and capstone projects. "
+            )
+            * 4,
+            "approval_status": "approved",
+        },
+    ).raise_for_status()
+
+    opportunity = client.post(f"/organizations/{org['id']}/opportunities/generate").json()["opportunities"][0]
+    opportunity["title"] = "Get Hands-on with Quainy Labs' Python First Principles"
+    store.opportunities[opportunity["id"]] = store.opportunities[opportunity["id"]].model_copy(update={"title": opportunity["title"]})
+    brief = client.post(f"/opportunities/{opportunity['id']}/briefs").json()
+    original_provider = store.model_provider
+    store.model_provider = InstagramLabsPromoDraftProvider()
+    try:
+        instagram = client.post(f"/briefs/{brief['id']}/drafts?platform=instagram&content_type=post").json()["drafts"][0]
+    finally:
+        store.model_provider = original_provider
+
+    lowered = instagram["body"].lower()
+    assert instagram["generation_metadata"]["body_source"] == "adapter_render"
+    assert "model_rejection_reason" in instagram["generation_metadata"]
+    assert "real context makes better content" not in lowered
+    assert "get hands-on with quainy labs" not in lowered
+    assert "quainy labs are public" not in lowered
+    assert "turn quainy's culture into real work" not in lowered
+    assert "read more about" not in lowered
+    assert "start building" not in lowered
+    assert "tests" in lowered
+    assert "tradeoffs" in lowered
+
+
+def test_reddit_promotional_or_invented_post_is_rejected():
+    org = client.post("/organizations", json={"name": "Reddit Labs Caption Org"}).json()
+    client.patch(
+        f"/organizations/{org['id']}/profile",
+        json={
+            "audience": "students, developers, founders, curious learners, and one-person builders",
+            "content_pillars": ["Python First Principles", "Quainy Labs"],
+        },
+    ).raise_for_status()
+    client.post(
+        f"/organizations/{org['id']}/sources",
+        json={
+            "source_type": "manual_note",
+            "title": "Quainy Labs Python First Principles",
+            "raw_text": (
+                "Quainy Labs includes Python First Principles as a hands-on lab for understanding software engineering tradeoffs. "
+                "The lab helps builders reason about speed, reliability, testing, and production readiness without treating AI as a shortcut. "
+            )
+            * 4,
+            "approval_status": "approved",
+        },
+    ).raise_for_status()
+
+    opportunity = client.post(f"/organizations/{org['id']}/opportunities/generate").json()["opportunities"][0]
+    brief = client.post(f"/opportunities/{opportunity['id']}/briefs").json()
+    original_provider = store.model_provider
+    store.model_provider = RedditPromoDraftProvider()
+    try:
+        reddit = client.post(f"/briefs/{brief['id']}/drafts?platform=reddit&content_type=post").json()["drafts"][0]
+    finally:
+        store.model_provider = original_provider
+
+    lowered = reddit["body"].lower()
+    assert reddit["generation_metadata"]["body_source"] == "adapter_render"
+    assert "model_rejection_reason" in reddit["generation_metadata"]
+    assert "**build production-ready ai products with quainy labs**" not in lowered
+    assert "as i built my first" not in lowered
+    assert "what's your experience" not in lowered
+    assert "should we prioritize speed or reliability" not in lowered
+    assert "as ai leverages grow" not in lowered
+    assert "what truly matters" not in lowered
+    assert "turn our culture into real work" not in lowered
+    assert "what's the value of this capability-building path" not in lowered
+    assert "ever wondered" not in lowered
+    assert "i recently stumbled upon" not in lowered
+    assert "enhances productivity" not in lowered
+    assert "ai-powered projects" not in lowered
+    assert "read more about" not in lowered
+    assert "start building" not in lowered
+    assert "Question for the community:" not in reddit["body"]
+    assert reddit["body"].count("?") >= 1
