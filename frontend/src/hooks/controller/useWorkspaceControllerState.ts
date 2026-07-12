@@ -92,7 +92,7 @@ export function useWorkspaceControllerState() {
   const [trendSignals, setTrendSignals] = useState<TrendSignal[]>([]);
   const [calendarEventForm, setCalendarEventForm] = useState<CalendarEventForm>(emptyCalendarEventForm);
   const [trendSignalForm, setTrendSignalForm] = useState<TrendSignalForm>(emptyTrendSignalForm);
-  const [formatChoice, setFormatChoice] = useState<FormatChoice>("linkedin_company_post");
+  const [formatChoice, setFormatChoice] = useState<FormatChoice>("linkedin_post");
   const [activeView, setActiveView] = useState<WorkspaceView>("studio");
   const [setupSection, setSetupSection] = useState<SetupSection>("company");
   const [libraryStatusFilter, setLibraryStatusFilter] = useState<LibraryStatusFilter>("all");

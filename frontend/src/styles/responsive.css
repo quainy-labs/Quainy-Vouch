@@ -10,11 +10,13 @@
 
   .view-nav {
     grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 1px;
-    padding: 0 12px;
+    gap: 6px;
+    width: min(var(--content-max), calc(100% - 24px));
+    padding: 6px;
   }
 
   .workspace,
+  .section-workspace,
   .review-grid {
     grid-template-columns: 1fr;
   }
@@ -22,6 +24,13 @@
   .rail {
     grid-template-columns: repeat(2, minmax(0, 1fr));
     position: static;
+    max-height: none;
+    overflow: visible;
+  }
+
+  .section-sidebar {
+    position: static;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
     max-height: none;
     overflow: visible;
   }
@@ -35,7 +44,9 @@
   }
 
   .source-library-grid,
+  .source-library-grid.browse-mode,
   .source-primary-grid,
+  .source-edit-grid,
   .source-availability-panel,
   .source-availability-controls,
   .readiness-panel,
@@ -46,13 +57,15 @@
   .preview-layout,
   .brief-grid,
   .manual-metrics,
-  .team-form {
+  .team-form,
+  .review-context-card {
     grid-template-columns: 1fr;
   }
 
   .artifact-grid,
   .library-value-grid,
   .calendar-grid,
+  .calendar-summary-grid,
   .readiness-signals,
   .readiness-recommendations,
   .source-guide-grid,
@@ -120,33 +133,39 @@
   .topbar {
     align-items: start;
     flex-direction: column;
-    padding: 22px 18px;
+    width: calc(100% - 24px);
+    padding: 18px 0 14px;
+  }
+
+  .status-strip {
+    justify-content: flex-start;
   }
 
   .view-nav {
     grid-auto-flow: column;
     grid-auto-columns: minmax(172px, 1fr);
     grid-template-columns: none;
+    width: calc(100% - 24px);
     overflow-x: auto;
-    padding: 0 12px;
+    padding: 6px;
     scroll-snap-type: x mandatory;
   }
 
   .view-nav button {
-    border-left: 0;
     scroll-snap-align: start;
   }
 
-  .view-nav button:first-child {
-    border-left: 1px solid var(--line);
-  }
-
   .workspace {
-    padding: 12px;
+    width: calc(100% - 24px);
+    padding: 14px 0 32px;
   }
 
   .rail,
+  .section-sidebar,
+  .review-context-card,
   .opportunity-grid,
+  .studio-flow-grid,
+  .calendar-summary-grid,
   .artifact-grid,
   .library-value-grid,
   .calendar-grid,
@@ -200,6 +219,7 @@
   }
 
   .review-action-grid,
+  .review-action-card .action-row,
   .schedule-row {
     grid-template-columns: 1fr;
   }
@@ -224,6 +244,16 @@
   }
 
   .policy-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .work-status,
+  .source-list-item {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .lifecycle-grid {
     grid-template-columns: 1fr;
   }
 

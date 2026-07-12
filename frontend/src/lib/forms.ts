@@ -96,12 +96,14 @@ export function draftFormatLabel(draft: Draft | null): string {
   if (draft.platform === "blog") return "Blog outline";
   if (draft.platform === "newsletter") return "Newsletter email";
   if (draft.platform === "instagram" && draft.content_type === "carousel_outline") return "Instagram carousel";
-  if (draft.platform === "instagram") return "Instagram caption";
-  return "LinkedIn company post";
+  if (draft.platform === "instagram") return "Instagram post";
+  if (draft.platform === "reddit") return "Reddit post";
+  return "LinkedIn post";
 }
 
 export function platformDisplayName(platform: string): string {
   if (platform === "linkedin") return "LinkedIn";
+  if (platform === "reddit") return "Reddit";
   if (platform === "blog") return "Blog";
   if (platform === "newsletter") return "Newsletter";
   if (platform === "instagram") return "Instagram";
@@ -136,44 +138,36 @@ export function formatAuditTime(value: string): string {
 
 export function formatChoiceParams(choice: FormatChoice): string {
   const params: Record<FormatChoice, string> = {
-    linkedin_company_post: "?platform=linkedin&content_type=company_post",
-    blog_outline: "?platform=blog&content_type=outline",
-    newsletter_email: "?platform=newsletter&content_type=email",
-    instagram_caption: "?platform=instagram&content_type=caption",
-    instagram_carousel_outline: "?platform=instagram&content_type=carousel_outline",
+    linkedin_post: "?platform=linkedin&content_type=company_post",
+    reddit_post: "?platform=reddit&content_type=post",
+    instagram_post: "?platform=instagram&content_type=post",
   };
   return params[choice];
 }
 
 export function formatChoiceNotice(choice: FormatChoice): string {
   const notices: Record<FormatChoice, string> = {
-    linkedin_company_post: "LinkedIn variants generated from the selected brief.",
-    blog_outline: "Blog outline variants generated from the selected brief.",
-    newsletter_email: "Newsletter email variants generated from the selected brief.",
-    instagram_caption: "Instagram caption variants generated from the selected brief.",
-    instagram_carousel_outline: "Instagram carousel variants generated from the selected brief.",
+    linkedin_post: "LinkedIn post variants generated from the selected brief.",
+    reddit_post: "Reddit post variants generated from the selected brief.",
+    instagram_post: "Instagram post variants generated from the selected brief.",
   };
   return notices[choice];
 }
 
 export function formatChoiceLabel(choice: FormatChoice): string {
   const labels: Record<FormatChoice, string> = {
-    linkedin_company_post: "LinkedIn company post",
-    blog_outline: "Blog article outline",
-    newsletter_email: "Newsletter email",
-    instagram_caption: "Instagram caption",
-    instagram_carousel_outline: "Instagram carousel outline",
+    linkedin_post: "LinkedIn post",
+    reddit_post: "Reddit post",
+    instagram_post: "Instagram post",
   };
   return labels[choice];
 }
 
 export function formatChoicePlatform(choice: FormatChoice): { platform: string; contentType: string } {
   const formats: Record<FormatChoice, { platform: string; contentType: string }> = {
-    linkedin_company_post: { platform: "linkedin", contentType: "company_post" },
-    blog_outline: { platform: "blog", contentType: "outline" },
-    newsletter_email: { platform: "newsletter", contentType: "email" },
-    instagram_caption: { platform: "instagram", contentType: "caption" },
-    instagram_carousel_outline: { platform: "instagram", contentType: "carousel_outline" },
+    linkedin_post: { platform: "linkedin", contentType: "company_post" },
+    reddit_post: { platform: "reddit", contentType: "post" },
+    instagram_post: { platform: "instagram", contentType: "post" },
   };
   return formats[choice];
 }

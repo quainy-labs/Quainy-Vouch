@@ -72,11 +72,9 @@ export type TrendSignalForm = {
 };
 
 export type FormatChoice =
-  | "linkedin_company_post"
-  | "blog_outline"
-  | "newsletter_email"
-  | "instagram_caption"
-  | "instagram_carousel_outline";
+  | "linkedin_post"
+  | "reddit_post"
+  | "instagram_post";
 
 export type WorkspaceView = "studio" | "library" | "calendar" | "sources" | "strategy" | "settings";
 export type SetupSection = "company" | "voice" | "claims" | "linkedin" | "ai";

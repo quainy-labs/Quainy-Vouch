@@ -12,7 +12,7 @@ export function ViewHero({ view }: ViewHeroProps) {
         <h2>{view.title}</h2>
         <p>{view.description}</p>
       </div>
-      <span>{view.badge}</span>
+      <span className="hero-badge">{view.badge}</span>
     </section>
   );
 }

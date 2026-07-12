@@ -1,16 +1,29 @@
 .policy-grid {
   display: grid;
-  grid-template-columns: minmax(140px, 0.8fr) repeat(3, minmax(140px, 1fr));
-  gap: 8px;
-  align-items: end;
+  grid-template-columns: 1fr;
+  gap: 10px;
+  align-items: stretch;
 }
 
 .policy-grid label {
-  display: grid;
-  gap: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  min-height: 56px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--paper);
   color: var(--muted);
   font-size: 0.8rem;
   font-weight: 700;
+  padding: 10px 12px;
+}
+
+.policy-grid label:first-child {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 120px;
+  align-items: center;
 }
 
 .policy-grid input {
@@ -140,4 +153,38 @@
   font-family: "IBM Plex Mono", monospace;
   font-size: 0.72rem;
   padding: 6px 9px;
+}
+
+.settings-workspace {
+  align-items: start;
+}
+
+.danger-panel {
+  border-color: rgba(201, 79, 61, 0.28);
+}
+
+.lifecycle-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.lifecycle-grid article {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-alt);
+  padding: 14px;
+}
+
+.lifecycle-grid strong {
+  color: var(--graphite);
+}
+
+.lifecycle-grid p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.45;
 }

@@ -41,45 +41,39 @@ def test_seeded_quainy_flow_generates_reviewable_draft_and_memory():
     assert any(item["source_draft_id"] == first["id"] for item in memory)
 
 
-def test_same_brief_generates_linkedin_and_blog_outline():
+def test_same_brief_generates_supported_social_posts():
     bootstrap = client.get("/bootstrap").json()
     org_id = bootstrap["organization"]["id"]
     opportunity = client.post(f"/organizations/{org_id}/opportunities/generate").json()["opportunities"][0]
     brief = client.post(f"/opportunities/{opportunity['id']}/briefs").json()
 
     linkedin = client.post(f"/briefs/{brief['id']}/drafts?platform=linkedin&content_type=company_post").json()["drafts"][0]
-    blog = client.post(f"/briefs/{brief['id']}/drafts?platform=blog&content_type=outline").json()["drafts"][0]
-    newsletter = client.post(f"/briefs/{brief['id']}/drafts?platform=newsletter&content_type=email").json()["drafts"][0]
-    caption = client.post(f"/briefs/{brief['id']}/drafts?platform=instagram&content_type=caption").json()["drafts"][0]
-    carousel = client.post(f"/briefs/{brief['id']}/drafts?platform=instagram&content_type=carousel_outline").json()["drafts"][0]
+    reddit = client.post(f"/briefs/{brief['id']}/drafts?platform=reddit&content_type=post").json()["drafts"][0]
+    instagram = client.post(f"/briefs/{brief['id']}/drafts?platform=instagram&content_type=post").json()["drafts"][0]
 
     assert linkedin["content_brief_id"] == brief["id"]
-    assert blog["content_brief_id"] == brief["id"]
-    assert newsletter["content_brief_id"] == brief["id"]
-    assert caption["content_brief_id"] == brief["id"]
-    assert carousel["content_brief_id"] == brief["id"]
+    assert reddit["content_brief_id"] == brief["id"]
+    assert instagram["content_brief_id"] == brief["id"]
     assert linkedin["platform"] == "linkedin"
-    assert blog["platform"] == "blog"
-    assert newsletter["platform"] == "newsletter"
-    assert caption["platform"] == "instagram"
-    assert carousel["platform"] == "instagram"
-    assert blog["content_type"] == "outline"
-    assert newsletter["content_type"] == "email"
-    assert caption["content_type"] == "caption"
-    assert carousel["content_type"] == "carousel_outline"
-    assert "## Introduction" in blog["body"]
-    assert "Source-backed note:" in blog["body"]
-    assert blog["generation_metadata"]["prompt_version"] == "blog_outline.v1"
-    assert "Subject options:" in newsletter["body"]
-    assert "Takeaway:" in newsletter["body"]
-    assert "Sources and links:" in newsletter["body"]
-    assert newsletter["generation_metadata"]["prompt_version"] == "newsletter_email.v1"
-    assert "Visual direction:" in caption["body"]
-    assert "Hashtags:" in caption["body"]
-    assert caption["generation_metadata"]["prompt_version"] == "instagram_caption.v1"
-    assert "Slide 1:" in carousel["body"]
-    assert "Slide 5:" in carousel["body"]
-    assert carousel["generation_metadata"]["prompt_version"] == "instagram_carousel_outline.v1"
+    assert reddit["platform"] == "reddit"
+    assert instagram["platform"] == "instagram"
+    assert linkedin["content_type"] == "company_post"
+    assert reddit["content_type"] == "post"
+    assert instagram["content_type"] == "post"
+    assert reddit["generation_metadata"]["prompt_version"] == "reddit_post.v1"
+    assert "Subreddit fit:" in reddit["body"]
+    assert "Discussion question:" in reddit["body"]
+    assert instagram["generation_metadata"]["prompt_version"] == "instagram_post.v1"
+    assert "Visual direction:" in instagram["body"]
+    assert "Post copy:" in instagram["body"]
+    assert "Hashtags:" in instagram["body"]
+
+    old_blog = client.post(f"/briefs/{brief['id']}/drafts?platform=blog&content_type=outline")
+    old_newsletter = client.post(f"/briefs/{brief['id']}/drafts?platform=newsletter&content_type=email")
+    old_carousel = client.post(f"/briefs/{brief['id']}/drafts?platform=instagram&content_type=carousel_outline")
+    assert old_blog.status_code == 404
+    assert old_newsletter.status_code == 404
+    assert old_carousel.status_code == 404
 
 
 def test_disabled_sources_are_not_used_for_generation():

@@ -18,6 +18,11 @@ type ProfileSetupPanelProps = {
   notice: string;
   canManageWorkspace: boolean;
   workspacePermissionMessage: string;
+  eyebrow?: string;
+  title?: string;
+  saveLabel?: string;
+  showPrimaryAction?: boolean;
+  sectionIds?: SetupSection[];
   setupForm: SetupForm;
   setupErrors: string[];
   setupSection: SetupSection;
@@ -34,7 +39,7 @@ type ProfileSetupPanelProps = {
   onTestAIProviderSettings: () => void | Promise<void>;
 };
 
-const setupSections: Array<{ id: SetupSection; label: string }> = [
+const allSetupSections: Array<{ id: SetupSection; label: string }> = [
   { id: "company", label: "Company" },
   { id: "voice", label: "Voice" },
   { id: "claims", label: "Claims" },
@@ -47,6 +52,11 @@ export function ProfileSetupPanel({
   notice,
   canManageWorkspace,
   workspacePermissionMessage,
+  eyebrow = "Setup",
+  title = "Organization and voice profile",
+  saveLabel = "Save setup",
+  showPrimaryAction = true,
+  sectionIds = ["company", "voice", "claims"],
   setupForm,
   setupErrors,
   setupSection,
@@ -62,40 +72,47 @@ export function ProfileSetupPanel({
   onSaveAIProviderSettings,
   onTestAIProviderSettings,
 }: ProfileSetupPanelProps) {
+  const visibleSections = allSetupSections.filter((section) => sectionIds.includes(section.id));
+  const activeSetupSection = visibleSections.some((section) => section.id === setupSection) ? setupSection : visibleSections[0]?.id ?? "company";
+
   return (
     <section className="panel band setup-panel">
       <div className="section-heading">
         <div>
-          <p className="eyebrow">Setup</p>
-          <h2>Organization and voice profile</h2>
+          <p className="eyebrow">{eyebrow}</p>
+          <h2>{title}</h2>
         </div>
-        <div className="setup-actions">
-          <button
-            className="icon-button primary"
-            onClick={() => void onSaveSetup()}
-            disabled={busy || !canManageWorkspace}
-            title={canManageWorkspace ? "Save setup" : workspacePermissionMessage}
-          >
-            <Save size={18} />
-            <span>Save setup</span>
-          </button>
-        </div>
+        {showPrimaryAction && (
+          <div className="setup-actions">
+            <button
+              className="icon-button primary"
+              onClick={() => void onSaveSetup()}
+              disabled={busy || !canManageWorkspace}
+              title={canManageWorkspace ? "Save setup" : workspacePermissionMessage}
+            >
+              <Save size={18} />
+              <span>{saveLabel}</span>
+            </button>
+          </div>
+        )}
       </div>
       <ErrorList errors={setupErrors} />
-      <div className="section-tabs" role="tablist" aria-label="Profile sections">
-        {setupSections.map((section) => (
+      {visibleSections.length > 1 && (
+        <div className="section-tabs" role="tablist" aria-label="Profile sections">
+          {visibleSections.map((section) => (
           <button
-            className={setupSection === section.id ? "active" : ""}
+            className={activeSetupSection === section.id ? "active" : ""}
             key={section.id}
             onClick={() => onSetupSectionChange(section.id)}
             type="button"
           >
             {section.label}
           </button>
-        ))}
-      </div>
-      <div className={`setup-grid setup-${setupSection}`}>
-        {setupSection === "company" && (
+          ))}
+        </div>
+      )}
+      <div className={`setup-grid setup-${activeSetupSection}`}>
+        {activeSetupSection === "company" && (
           <>
             <Field label="Organization name">
               <input value={setupForm.name} onChange={(event) => onSetupFormChange({ ...setupForm, name: event.target.value })} />
@@ -137,7 +154,7 @@ export function ProfileSetupPanel({
             </Field>
           </>
         )}
-        {setupSection === "voice" && (
+        {activeSetupSection === "voice" && (
           <>
             <Field label="Content pillars" wide>
               <textarea
@@ -176,7 +193,7 @@ export function ProfileSetupPanel({
             </Field>
           </>
         )}
-        {setupSection === "claims" && (
+        {activeSetupSection === "claims" && (
           <>
             <Field label="Approved claims" wide>
               <textarea
@@ -194,7 +211,7 @@ export function ProfileSetupPanel({
             </Field>
           </>
         )}
-        {setupSection === "linkedin" && linkedinIntegration && (
+        {activeSetupSection === "linkedin" && linkedinIntegration && (
           <>
             <Field label="LinkedIn page URN">
               <input
@@ -226,7 +243,7 @@ export function ProfileSetupPanel({
             </Field>
           </>
         )}
-        {setupSection === "ai" && aiProviderDraft && (
+        {activeSetupSection === "ai" && aiProviderDraft && (
           <>
             <Field label="Generation provider">
               <select

@@ -10,7 +10,6 @@ import type { WorkspaceShellProps } from "./WorkspaceShell.types";
 import { AppTopbar } from "./AppTopbar";
 import { ViewHero } from "./ViewHero";
 import { WorkspaceNav } from "./WorkspaceNav";
-import { WorkspaceRail } from "./WorkspaceRail";
 
 export function WorkspaceShell({
   bootstrap,
@@ -25,8 +24,6 @@ export function WorkspaceShell({
   approvedSources,
   disabledSources,
   archivedSources,
-  railSources,
-  railSourceOverflow,
   selectedSourceId,
   libraryMetrics,
   statusOptions,
@@ -115,6 +112,7 @@ export function WorkspaceShell({
   onCommitSourceForm,
   onSourceFile,
   onUpdateSourceStatus,
+  onUpdateSource,
   onRefreshSource,
   onCalendarEventFormChange,
   onTrendSignalFormChange,
@@ -165,18 +163,6 @@ export function WorkspaceShell({
       <WorkspaceNav activeView={activeView} items={viewItems} onSelectView={onActiveViewChange} />
 
       <section className="workspace">
-        <WorkspaceRail
-          approvedCount={approvedSources.length}
-          disabledCount={disabledSources.length}
-          archivedCount={archivedSources.length}
-          sources={railSources}
-          selectedSourceId={selectedSourceId}
-          sourceOverflow={railSourceOverflow}
-          preferredPhrases={bootstrap.profile.preferred_phrases}
-          onSelectSource={onSelectSource}
-          onShowSources={() => onActiveViewChange("sources")}
-        />
-
         <section className="main-column">
           <ViewHero view={currentView} />
 
@@ -248,14 +234,18 @@ export function WorkspaceShell({
               disabledCount={disabledSources.length}
               archivedCount={archivedSources.length}
               totalSourceCount={bootstrap.sources.length}
+              sources={bootstrap.sources}
+              selectedSourceId={selectedSourceId}
               sourceForm={sourceForm}
               sourceDetail={sourceDetail}
               onAddSource={onAddSource}
               onReadinessAction={onReadinessAction}
               onSelectSourceType={onSelectSourceType}
+              onSelectSource={onSelectSource}
               onCommitSourceForm={onCommitSourceForm}
               onSourceFile={onSourceFile}
               onUpdateSourceStatus={onUpdateSourceStatus}
+              onUpdateSource={onUpdateSource}
               onRefreshSource={onRefreshSource}
               formatAuditTime={formatAuditTime}
             />

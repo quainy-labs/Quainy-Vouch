@@ -1,23 +1,31 @@
 @import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@500;600&family=Manrope:wght@400;600;700;800&display=swap");
 
 :root {
-  --bg: #f4f6f5;
+  --bg: #f6f7f4;
   --paper: #ffffff;
-  --ink: #111817;
-  --muted: #5b6864;
-  --line: #dce5df;
-  --line-strong: #b8c8c1;
-  --field: #fbfdfc;
+  --surface: #ffffff;
+  --surface-alt: #fafbf8;
+  --ink: #17201d;
+  --muted: #63706b;
+  --muted-strong: #44524d;
+  --line: #e3e8e3;
+  --line-strong: #c8d2ca;
+  --field: #fbfcfa;
   --field-hover: #ffffff;
-  --focus-ring: rgba(15, 159, 120, 0.16);
-  --green: #0f9f78;
-  --green-dark: #0a6f55;
-  --blue: #2457d6;
-  --blue-soft: #e7edfb;
-  --mint: #e5f5ed;
-  --graphite: #17231f;
-  --coral: #e9573f;
-  --coral-soft: #ffe8e2;
+  --focus-ring: rgba(22, 119, 92, 0.16);
+  --green: #16775c;
+  --green-dark: #0f5945;
+  --blue: #2d5fb8;
+  --blue-soft: #eaf0fb;
+  --mint: #edf7f1;
+  --graphite: #1d2a26;
+  --coral: #c94f3d;
+  --coral-soft: #fff0ea;
+  --amber: #9b6b18;
+  --amber-soft: #fff7df;
+  --shadow-soft: 0 1px 2px rgba(17, 24, 23, 0.05), 0 12px 28px rgba(17, 24, 23, 0.045);
+  --shadow-raised: 0 1px 2px rgba(17, 24, 23, 0.06), 0 18px 42px rgba(17, 24, 23, 0.075);
+  --content-max: 1480px;
 }
 
 * {
@@ -28,7 +36,9 @@ body {
   margin: 0;
   min-width: 320px;
   min-height: 100vh;
-  background: var(--bg);
+  background:
+    linear-gradient(180deg, #fafaf7 0, var(--bg) 260px),
+    var(--bg);
   color: var(--ink);
   font-family: Manrope, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
@@ -42,6 +52,12 @@ select {
 
 button {
   cursor: pointer;
+}
+
+button:focus-visible,
+a:focus-visible {
+  outline: 3px solid var(--focus-ring);
+  outline-offset: 2px;
 }
 
 input,

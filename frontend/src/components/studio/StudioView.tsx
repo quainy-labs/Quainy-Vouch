@@ -8,6 +8,8 @@ import type {
   ReviewerPackage,
   Source,
 } from "../../types";
+import { FileCheck2, Layers, ListChecks, ShieldCheck, Sparkles } from "lucide-react";
+import { useState } from "react";
 import {
   contentTypeDisplayName,
   formatChoiceLabel,
@@ -117,6 +119,7 @@ export function StudioView({
   onScheduleForChange,
   onScheduleDraft,
 }: StudioViewProps) {
+  const [activeSection, setActiveSection] = useState<"overview" | "opportunities" | "brief" | "drafts" | "review">("overview");
   const sourceTitleById = new Map(approvedSources.map((source) => [source.id, source.title]));
   const activeSourceSummary = summarizeNames(approvedSources.map((source) => source.title), 3);
   const selectedFormatConfig = formatChoicePlatform(formatChoice);
@@ -130,6 +133,16 @@ export function StudioView({
     .split(/\n{2,}/)
     .map((paragraph) => paragraph.trim())
     .filter(Boolean);
+  const selectedBriefOpportunity = selectedBrief
+    ? selectedOpportunity?.id === selectedBrief.opportunity_id
+      ? selectedOpportunity
+      : rankedOpportunities.find((opportunity) => opportunity.id === selectedBrief.opportunity_id) ?? selectedOpportunity
+    : null;
+  const selectedBriefOpportunityRank = selectedBrief
+    ? rankedOpportunities.findIndex((opportunity) => opportunity.id === selectedBrief.opportunity_id)
+    : -1;
+  const selectedBriefOpportunityLabel =
+    selectedBriefOpportunityRank >= 0 ? `Opportunity #${selectedBriefOpportunityRank + 1}` : "Selected opportunity";
   const supportedClaimCount = selectedDraft?.claims.filter((claim) => claim.support_status === "supported").length ?? 0;
   const unsupportedClaimCount = selectedDraft?.claims.filter((claim) => claim.support_status === "unsupported").length ?? 0;
   const duplicateMatchCount = selectedDraft?.duplicate_report.similar_posts.length ?? 0;
@@ -199,9 +212,9 @@ export function StudioView({
           : "No reviewer decision has been recorded yet.",
       status: reviewPackage.suggested_action.toLowerCase().includes("unsupported") ? "warning" : "pending",
     });
-    reviewPackage.decision_history.slice(0, 3).forEach((decision) => {
+    reviewPackage.decision_history.slice(0, 1).forEach((decision) => {
       trustTimelineItems.push({
-        step: "Decision",
+        step: "Latest decision",
         title: decision.decision,
         detail: `${new Date(decision.created_at).toLocaleString()}${decision.reason ? ` - ${decision.reason}` : ""}`,
         status: decision.decision === "rejected" ? "warning" : "complete",
@@ -209,95 +222,215 @@ export function StudioView({
     });
   }
 
+  const workflowPanel = (
+    <section className="panel band studio-flow-panel">
+      <div className="section-heading">
+        <div>
+          <p className="eyebrow">Studio workflow</p>
+          <h2>Opportunity to reviewed artifact</h2>
+        </div>
+        <span className="hero-badge">{selectedBrief ? "Brief ready" : "No active brief"}</span>
+      </div>
+      <div className="studio-flow-grid">
+        <article className={selectedOpportunity ? "complete" : ""}>
+          <span>1</span>
+          <strong>Opportunity</strong>
+          <p>{selectedOpportunity?.title ?? `${rankedOpportunities.length} ranked angles available`}</p>
+        </article>
+        <article className={selectedBrief ? "complete" : ""}>
+          <span>2</span>
+          <strong>Brief</strong>
+          <p>{selectedBrief ? selectedBrief.key_message : "Create a brief from one selected angle."}</p>
+        </article>
+        <article className={drafts.length > 0 ? "complete" : ""}>
+          <span>3</span>
+          <strong>Drafts</strong>
+          <p>{drafts.length > 0 ? `${drafts.length} generated variant${drafts.length === 1 ? "" : "s"}` : "Generate variants only after a brief exists."}</p>
+        </article>
+        <article className={reviewPackage ? "complete" : ""}>
+          <span>4</span>
+          <strong>Review</strong>
+          <p>{reviewPackage ? reviewPackage.suggested_action : "Approve, reject, edit, export, or schedule from the review desk."}</p>
+        </article>
+      </div>
+    </section>
+  );
+
+  const opportunitiesPanel = (
+    <OpportunitiesPanel
+      busy={busy}
+      canEditContent={canEditContent}
+      permissionMessage={knowledgePermissionMessage}
+      approvedSources={approvedSources}
+      rankedOpportunities={rankedOpportunities}
+      visibleOpportunities={visibleOpportunities}
+      hiddenOpportunityCount={hiddenOpportunityCount}
+      selectedOpportunity={selectedOpportunity}
+      opportunityMessage={opportunityMessage}
+      opportunityCount={opportunityCount}
+      onGenerate={onGenerateOpportunities}
+      onCreateBrief={async (opportunity) => {
+        await onCreateBrief(opportunity);
+        setActiveSection("brief");
+      }}
+      onShowMore={onShowMoreOpportunities}
+    />
+  );
+
+  const emptyBriefPanel = (
+    <section className="panel band">
+      <div className="empty-detail">
+        <FileCheck2 size={24} />
+        <strong>No brief exists yet</strong>
+        <p>Create a brief from a selected opportunity before choosing formats or generating draft variants.</p>
+      </div>
+    </section>
+  );
+
+  const emptyDraftPanel = (
+    <section className="panel band">
+      <div className="empty-detail">
+        <Layers size={24} />
+        <strong>No drafts generated</strong>
+        <p>Draft variants appear after a brief exists and a format has been selected.</p>
+      </div>
+    </section>
+  );
+
+  const emptyReviewPanel = (
+    <section className="panel band">
+      <div className="empty-detail">
+        <ShieldCheck size={24} />
+        <strong>No draft selected for review</strong>
+        <p>Generate and select a draft to see review checks, decisions, export, publish, and schedule controls.</p>
+      </div>
+    </section>
+  );
+
   return (
-    <>
-      <OpportunitiesPanel
-        busy={busy}
-        canEditContent={canEditContent}
-        permissionMessage={knowledgePermissionMessage}
-        approvedSources={approvedSources}
-        rankedOpportunities={rankedOpportunities}
-        visibleOpportunities={visibleOpportunities}
-        hiddenOpportunityCount={hiddenOpportunityCount}
-        selectedOpportunity={selectedOpportunity}
-        opportunityMessage={opportunityMessage}
-        opportunityCount={opportunityCount}
-        onGenerate={onGenerateOpportunities}
-        onCreateBrief={onCreateBrief}
-        onShowMore={onShowMoreOpportunities}
-      />
+    <section className="section-workspace studio-workspace">
+      <aside className="section-sidebar" aria-label="Studio sections">
+        <button className={activeSection === "overview" ? "active" : ""} onClick={() => setActiveSection("overview")} type="button">
+          <ListChecks size={16} />
+          <span>Overview</span>
+          <small>{selectedBrief ? "Brief ready" : "No brief"}</small>
+        </button>
+        <button className={activeSection === "opportunities" ? "active" : ""} onClick={() => setActiveSection("opportunities")} type="button">
+          <Sparkles size={16} />
+          <span>Opportunities</span>
+          <small>{rankedOpportunities.length} ranked</small>
+        </button>
+        <button className={activeSection === "brief" ? "active" : ""} onClick={() => setActiveSection("brief")} type="button">
+          <FileCheck2 size={16} />
+          <span>Brief</span>
+          <small>{selectedBrief ? `Exists (${selectedBriefOpportunityLabel.replace("Opportunity ", "")})` : "Not created"}</small>
+        </button>
+        <button className={activeSection === "drafts" ? "active" : ""} onClick={() => setActiveSection("drafts")} type="button">
+          <Layers size={16} />
+          <span>Drafts</span>
+          <small>{drafts.length} variants</small>
+        </button>
+        <button className={activeSection === "review" ? "active" : ""} onClick={() => setActiveSection("review")} type="button">
+          <ShieldCheck size={16} />
+          <span>Review</span>
+          <small>{reviewPackage ? "Ready" : "Waiting"}</small>
+        </button>
+      </aside>
 
-      {selectedBrief && (
-        <BriefPanel
-          brief={selectedBrief}
-          selectedFormatLabel={selectedFormatLabel}
-          formatChoice={formatChoice}
-          busy={busy}
-          canEditContent={canEditContent}
-          permissionMessage={knowledgePermissionMessage}
-          onSelectContentFormat={onSelectContentFormat}
-          onGenerateDrafts={onGenerateDraftsFromBrief}
-        />
-      )}
-
-      {drafts.length > 0 && (
-        <DraftVariantsPanel
-          drafts={drafts}
-          selectedDraft={selectedDraft}
-          selectedDraftMatchesFormat={selectedDraftMatchesFormat}
-          onSelectDraft={onSelectDraft}
-        />
-      )}
-
-      {selectedDraft && (
-        <DraftPreviewPanel
-          draft={selectedDraft}
-          selectedOpportunity={selectedOpportunity}
-          reviewPackage={reviewPackage}
-          previewParagraphs={previewParagraphs}
-          supportedClaimCount={supportedClaimCount}
-          unsupportedClaimCount={unsupportedClaimCount}
-          duplicateMatchCount={duplicateMatchCount}
-          selectedDraftAdapter={selectedDraftAdapter}
-          selectedDraftPromptVersion={selectedDraftPromptVersion}
-        />
-      )}
-
-      {selectedDraft && <TrustTimelinePanel items={trustTimelineItems} />}
-
-      {reviewPackage && selectedDraft && (
-        <ReviewDesk
-          busy={busy}
-          canEditContent={canEditContent}
-          canReviewContent={canReviewContent}
-          canApproveDraft={canApproveDraft}
-          canExportDraft={canExportDraft}
-          canScheduleDraft={canScheduleDraft}
-          canAttemptLinkedinPublish={canAttemptLinkedinPublish}
-          knowledgePermissionMessage={knowledgePermissionMessage}
-          reviewPermissionMessage={reviewPermissionMessage}
-          approvalBlocked={approvalBlocked}
-          publishCapabilityText={publishCapabilityText}
-          draft={selectedDraft}
-          reviewPackage={reviewPackage}
-          approvalPolicy={approvalPolicy}
-          approvalProgress={approvalProgress}
-          editedBody={editedBody}
-          reviewReason={reviewReason}
-          scheduleFor={scheduleFor}
-          linkedinIntegration={linkedinIntegration}
-          onEditedBodyChange={onEditedBodyChange}
-          onReviewReasonChange={onReviewReasonChange}
-          onSaveDraftEdit={onSaveDraftEdit}
-          onApproveDraft={onApproveDraft}
-          onRejectDraft={onRejectDraft}
-          onExportDraft={onExportDraft}
-          onPublishDraftToLinkedIn={onPublishDraftToLinkedIn}
-          onRegenerateSelectedDraft={onRegenerateSelectedDraft}
-          onScheduleForChange={onScheduleForChange}
-          onScheduleDraft={onScheduleDraft}
-        />
-      )}
-    </>
+      <div className="section-content">
+        {activeSection === "overview" && workflowPanel}
+        {activeSection === "opportunities" && opportunitiesPanel}
+        {activeSection === "brief" &&
+          (selectedBrief ? (
+            <BriefPanel
+              brief={selectedBrief}
+              opportunity={selectedBriefOpportunity}
+              opportunityLabel={selectedBriefOpportunityLabel}
+              selectedFormatLabel={selectedFormatLabel}
+              formatChoice={formatChoice}
+              busy={busy}
+              canEditContent={canEditContent}
+              permissionMessage={knowledgePermissionMessage}
+              onSelectContentFormat={onSelectContentFormat}
+              onGenerateDrafts={async () => {
+                await onGenerateDraftsFromBrief();
+                setActiveSection("drafts");
+              }}
+            />
+          ) : (
+            emptyBriefPanel
+          ))}
+        {activeSection === "drafts" && (
+          <>
+            {drafts.length > 0 ? (
+              <DraftVariantsPanel
+                drafts={drafts}
+                selectedDraft={selectedDraft}
+                selectedDraftMatchesFormat={selectedDraftMatchesFormat}
+                onSelectDraft={onSelectDraft}
+                onReviewDraft={(draft) => {
+                  onSelectDraft(draft);
+                  setActiveSection("review");
+                }}
+              />
+            ) : (
+              emptyDraftPanel
+            )}
+            {selectedDraft && (
+              <DraftPreviewPanel
+                draft={selectedDraft}
+                selectedOpportunity={selectedOpportunity}
+                reviewPackage={reviewPackage}
+                previewParagraphs={previewParagraphs}
+                supportedClaimCount={supportedClaimCount}
+                unsupportedClaimCount={unsupportedClaimCount}
+                duplicateMatchCount={duplicateMatchCount}
+              />
+            )}
+          </>
+        )}
+        {activeSection === "review" && (
+          <>
+            {selectedDraft && <TrustTimelinePanel items={trustTimelineItems} />}
+            {reviewPackage && selectedDraft ? (
+              <ReviewDesk
+                busy={busy}
+                canEditContent={canEditContent}
+                canReviewContent={canReviewContent}
+                canApproveDraft={canApproveDraft}
+                canExportDraft={canExportDraft}
+                canScheduleDraft={canScheduleDraft}
+                canAttemptLinkedinPublish={canAttemptLinkedinPublish}
+                knowledgePermissionMessage={knowledgePermissionMessage}
+                reviewPermissionMessage={reviewPermissionMessage}
+                approvalBlocked={approvalBlocked}
+                publishCapabilityText={publishCapabilityText}
+                opportunityLabel={selectedBriefOpportunityLabel}
+                draft={selectedDraft}
+                reviewPackage={reviewPackage}
+                approvalPolicy={approvalPolicy}
+                approvalProgress={approvalProgress}
+                editedBody={editedBody}
+                reviewReason={reviewReason}
+                scheduleFor={scheduleFor}
+                linkedinIntegration={linkedinIntegration}
+                onEditedBodyChange={onEditedBodyChange}
+                onReviewReasonChange={onReviewReasonChange}
+                onSaveDraftEdit={onSaveDraftEdit}
+                onApproveDraft={onApproveDraft}
+                onRejectDraft={onRejectDraft}
+                onExportDraft={onExportDraft}
+                onPublishDraftToLinkedIn={onPublishDraftToLinkedIn}
+                onRegenerateSelectedDraft={onRegenerateSelectedDraft}
+                onScheduleForChange={onScheduleForChange}
+                onScheduleDraft={onScheduleDraft}
+              />
+            ) : (
+              emptyReviewPanel
+            )}
+          </>
+        )}
+      </div>
+    </section>
   );
 }

@@ -13,11 +13,9 @@ from app.contracts import FormatAdapter
 from app.briefs import build_brief
 from app.drafts import generate_drafts
 from app.format_adapters import (
-    BlogOutlineAdapter,
-    InstagramCaptionAdapter,
-    InstagramCarouselOutlineAdapter,
+    InstagramPostAdapter,
     LinkedInCompanyPostAdapter,
-    NewsletterEmailAdapter,
+    RedditPostAdapter,
 )
 from app.intelligence import (
     content_hash,
@@ -176,10 +174,8 @@ class DataStore:
         self.opportunity_generator = OpportunityGenerator()
         self.trend_opportunity_generator = TrendOpportunityGenerator()
         self.register_format_adapter(LinkedInCompanyPostAdapter())
-        self.register_format_adapter(BlogOutlineAdapter())
-        self.register_format_adapter(NewsletterEmailAdapter())
-        self.register_format_adapter(InstagramCaptionAdapter())
-        self.register_format_adapter(InstagramCarouselOutlineAdapter())
+        self.register_format_adapter(RedditPostAdapter())
+        self.register_format_adapter(InstagramPostAdapter())
 
     def register_format_adapter(self, adapter: FormatAdapter) -> None:
         self.format_adapters[(adapter.platform, adapter.content_type)] = adapter
@@ -1395,14 +1391,27 @@ class DataStore:
                 "content_type": content_type,
             },
         )
-        for draft in drafts:
+        for draft_index, draft in enumerate(drafts):
             draft.generation_metadata["model_provider"] = model_log.provider
             draft.generation_metadata["model"] = model_log.model
             draft.generation_metadata["model_call_id"] = model_log.id
             draft.generation_metadata["model_prompt_version"] = model_log.prompt_version
             draft.generation_metadata["embedding_provider"] = self.embedding_provider_for_org(brief.organization_id).provider_name
             if model_output and model_output.variants:
-                draft.generation_metadata["model_recommendation"] = model_output.variants[0].model_dump(mode="json")
+                recommendation = model_output.variants[min(draft_index, len(model_output.variants) - 1)]
+                draft.generation_metadata["model_recommendation"] = recommendation.model_dump(mode="json")
+                if model_log.provider != "deterministic":
+                    draft.hook = recommendation.hook
+                    draft.body = recommendation.body
+                    draft.hashtags = recommendation.hashtags
+                    draft.claims = check_claims(draft.body, self.approved_chunks(draft.organization_id))
+                    draft.duplicate_report = duplicate_check(draft.body, self.list_memory(draft.organization_id))
+                    draft.risk_report = risk_check(draft.body, self.profiles[draft.organization_id], draft.claims, draft.duplicate_report, opportunity)
+                    draft.quality_report = adapter.quality_checks(draft.body, self.profiles[brief.organization_id], brief)
+                    draft.source_map = {claim.text: claim.supporting_chunk_ids for claim in draft.claims if claim.supporting_chunk_ids}
+                    draft.generation_metadata["body_source"] = "model_recommendation"
+                else:
+                    draft.generation_metadata["body_source"] = "adapter_render"
             self.drafts[draft.id] = draft
         self.log(brief.organization_id, "drafts.generated", "brief", brief.id, {"count": len(drafts)}, actor_id)
         return drafts
@@ -2147,16 +2156,40 @@ class DataStore:
         opportunity: ContentOpportunity,
         generation_spec: dict[str, Any],
     ) -> str:
+        platform = str(generation_spec.get("platform", "platform"))
+        content_type = str(generation_spec.get("content_type", "post"))
+        metadata = generation_spec.get("metadata", {})
+        evidence = "\n".join(
+            f"- {chunk.chunk_text[:420]}"
+            for chunk in self.approved_chunks(brief.organization_id)
+            if chunk.source_id in brief.source_ids
+        )
+        approved_claims = " | ".join(profile.approved_claims[:8]) or "Use only claims supported by the brief and evidence."
+        banned_phrases = " | ".join(profile.banned_phrases[:8]) or "No unsupported hype, metrics, or platform-inappropriate language."
         return (
-            "Generate reviewable draft variants as JSON. Use the brief and adapter rules. "
-            "Keep the draft source-grounded, cautious, and easy for a human reviewer to edit.\n"
+            "Generate reviewable draft variants as JSON for the exact platform and content type below. "
+            "The response must match DraftRecommendationSet with exactly 3 distinct variants containing hook, body, and hashtags. "
+            "Use the brief, adapter rules, adapter metadata, approved source evidence, and platform style. "
+            "Keep every claim source-grounded, cautious, and easy for a human reviewer to edit. "
+            "Do not produce a generic cross-platform draft.\n"
+            f"Platform: {platform}\n"
+            f"Content type: {content_type}\n"
             f"Audience: {profile.audience or brief.audience}\n"
+            f"Company one-liner: {profile.one_liner or profile.product_summary or 'unspecified'}\n"
             f"Brief key message: {brief.key_message}\n"
             f"Supporting points: {' | '.join(brief.supporting_points[:6])}\n"
+            f"Approved claims: {approved_claims}\n"
             f"Do not say: {' | '.join(brief.do_not_say[:8])}\n"
+            f"Banned phrases: {banned_phrases}\n"
             f"Opportunity reason: {opportunity.reason_today}\n"
             f"Adapter: {generation_spec.get('adapter_name')} {generation_spec.get('prompt_version')}\n"
-            f"Rules: {' | '.join(generation_spec.get('rules', [])[:10])}"
+            f"Rules: {' | '.join(generation_spec.get('rules', [])[:10])}\n"
+            f"Required structure/style metadata: {metadata}\n"
+            "Platform specifics:\n"
+            "- LinkedIn post: professional company update, short paragraphs, no unsupported metrics, useful takeaway.\n"
+            "- Reddit post: title, subreddit fit, body, discussion question, no hashtags, no sales tone, invite useful discussion.\n"
+            "- Instagram post: visual direction first, concise post copy, supportive hashtags, short lines, no long LinkedIn pacing.\n"
+            f"Evidence:\n{evidence[:2200]}"
         )
 
     def create_job(

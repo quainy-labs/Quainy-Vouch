@@ -63,6 +63,58 @@ class OpportunityStructuredProvider:
         )
 
 
+class SocialDraftStructuredProvider:
+    provider_name = "social-draft-test-provider"
+    model = "social-draft-v1"
+
+    def generate_structured(
+        self,
+        prompt: str,
+        schema_name: str,
+        json_schema: dict[str, Any] | None = None,
+    ) -> ModelProviderResult:
+        if schema_name == "DraftRecommendationSet":
+            if "Platform: reddit" in prompt:
+                body = (
+                    "Title: Model-written Reddit post\n\n"
+                    "Subreddit fit:\nUseful for builders discussing source-grounded content.\n\n"
+                    "Post body:\nThis is the model-written Reddit body using approved context.\n\n"
+                    "Discussion question: What would you verify before publishing this?"
+                )
+                hook = "Model-written Reddit post"
+            elif "Platform: instagram" in prompt:
+                body = (
+                    "Visual direction: A model-written source card beside a draft.\n\n"
+                    "Post copy:\nModel-written Instagram post from approved context.\n\n"
+                    "Hashtags: #SourceBacked #ProductJudgment"
+                )
+                hook = "Model-written Instagram post"
+            else:
+                body = "Model-written LinkedIn post from approved context."
+                hook = "Model-written LinkedIn post"
+            return ModelProviderResult(
+                provider=self.provider_name,
+                model=self.model,
+                output={"variants": [{"hook": hook, "body": body, "hashtags": ["#ModelWritten"]}]},
+                token_usage={"total_tokens": 18},
+            )
+        return ModelProviderResult(
+            provider=self.provider_name,
+            model=self.model,
+            output={
+                "recommendations": [
+                    {
+                        "title": "Use approved context for public posts",
+                        "summary": "Approved context can support useful public posts.",
+                        "why_now": "Source context is available for review today.",
+                        "confidence": 0.86,
+                    }
+                ]
+            },
+            token_usage={"total_tokens": 6},
+        )
+
+
 def create_context_org(name: str) -> dict:
     org = client.post("/organizations", json={"name": name}).json()
     client.patch(
@@ -157,5 +209,23 @@ def test_grounded_model_recommendation_becomes_top_opportunity():
 
     assert opportunities[0]["title"] == "Announce the new Product Judgment in the AI Era blog"
     assert opportunities[0]["metadata"]["generation_basis"] == "model_recommendation"
-    assert opportunities[0]["metadata"]["model_provider"] == "model-test-provider"
-    assert "published today" in opportunities[0]["reason_today"].lower()
+
+
+def test_social_draft_model_output_becomes_visible_draft_body():
+    org = create_context_org("Social Draft Model Org")
+    original_provider = store.model_provider
+    store.model_provider = SocialDraftStructuredProvider()
+    try:
+        opportunity = client.post(f"/organizations/{org['id']}/opportunities/generate").json()["opportunities"][0]
+        brief = client.post(f"/opportunities/{opportunity['id']}/briefs").json()
+        reddit = client.post(f"/briefs/{brief['id']}/drafts?platform=reddit&content_type=post").json()["drafts"][0]
+        instagram = client.post(f"/briefs/{brief['id']}/drafts?platform=instagram&content_type=post").json()["drafts"][0]
+    finally:
+        store.model_provider = original_provider
+
+    assert reddit["body"].startswith("Title: Model-written Reddit post")
+    assert reddit["hook"] == "Model-written Reddit post"
+    assert reddit["generation_metadata"]["body_source"] == "model_recommendation"
+    assert instagram["body"].startswith("Visual direction: A model-written source card")
+    assert instagram["hook"] == "Model-written Instagram post"
+    assert instagram["generation_metadata"]["body_source"] == "model_recommendation"

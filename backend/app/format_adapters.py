@@ -110,6 +110,97 @@ class LinkedInCompanyPostAdapter:
         return checks
 
 
+class RedditPostAdapter:
+    platform = "reddit"
+    content_type = "post"
+    adapter_name = "reddit_post"
+    adapter_version = "1.0.0"
+    prompt_version = prompt_versions.version("reddit_post")
+    rules = [
+        "Render as a Reddit post with a plain title, body, and discussion question.",
+        "Use community-aware, non-promotional language.",
+        "Avoid hashtags, corporate announcement tone, and hard selling.",
+        "Preserve only source-backed claims from the platform-independent brief.",
+        "Make the post useful enough to invite comments without engagement bait.",
+    ]
+
+    def generation_spec(self, brief: ContentBrief) -> DraftGenerationSpec:
+        return DraftGenerationSpec(
+            content_brief_id=brief.id,
+            platform=self.platform,
+            content_type=self.content_type,
+            adapter_name=self.adapter_name,
+            adapter_version=self.adapter_version,
+            prompt_version=self.prompt_version,
+            rules=self.rules,
+            metadata={
+                "brief_prompt_version": brief.prompt_version,
+                "structure": "title, subreddit_fit, body, discussion_question",
+                "avoid": "hashtags, sales copy, generic announcement language",
+            },
+        )
+
+    def variants(self) -> list[DraftVariant]:
+        return [
+            DraftVariant("What would you check before trusting this?", "discussion"),
+            DraftVariant("A practical lesson from source-backed work", "practical"),
+            DraftVariant("Where this workflow can go wrong", "caution"),
+        ]
+
+    def render(
+        self,
+        variant: DraftVariant,
+        profile: CompanyProfile,
+        brief: ContentBrief,
+        opportunity: ContentOpportunity,
+    ) -> RenderedDraft:
+        supporting = brief.supporting_points or [opportunity.summary]
+        first = clean_public_sentence(supporting[0], 260)
+        second = clean_public_sentence(supporting[1], 220) if len(supporting) > 1 else ""
+        audience = concise_audience(brief.audience or profile.audience)
+        title = f"{clean_key_message(brief.key_message)}"
+        if variant.style == "caution":
+            opening = "One thing I keep seeing: public posts get weaker when they move faster than the evidence behind them."
+            question = "What check would you add before letting a draft move into review?"
+        elif variant.style == "practical":
+            opening = f"A practical pattern for {audience}: start with approved context, then decide the format."
+            question = "Where do you usually draw the line between useful context and too much detail?"
+        else:
+            opening = f"I am thinking through this source-backed communication workflow: {brief.key_message}"
+            question = "What would make this trustworthy enough for you to review or publish?"
+
+        body_parts = [
+            f"Title: {title}",
+            "",
+            "Subreddit fit:",
+            "Useful for communities discussing product building, AI workflows, content operations, or source-grounded communication.",
+            "",
+            "Post body:",
+            opening,
+            "",
+            f"The source-backed detail: {first}",
+        ]
+        if second and second != first:
+            body_parts.extend(["", f"Another useful detail: {second}"])
+        body_parts.extend(["", f"Discussion question: {question}"])
+        return RenderedDraft(body="\n".join(body_parts), hook=title, hashtags=[])
+
+    def quality_checks(self, body: str, profile: CompanyProfile, brief: ContentBrief) -> list[str]:
+        checks: list[str] = []
+        required_sections = ["Title:", "Subreddit fit:", "Post body:", "Discussion question:"]
+        if all(section in body for section in required_sections):
+            checks.append("Uses Reddit post structure with title, subreddit fit, body, and discussion question.")
+        else:
+            checks.append("Review Reddit post structure; expected title, subreddit fit, body, and discussion question.")
+        if "#" not in body:
+            checks.append("Avoids hashtag formatting for Reddit.")
+        if not any(term in body.lower() for term in ["buy now", "sign up", "limited time"]):
+            checks.append("Avoids overt promotional language.")
+        if has_unsupported_metric(body, brief):
+            checks.append("Review any metric-like claim; Reddit post rules prohibit unsupported numbers or growth claims.")
+        return checks
+
+
 def has_unsupported_metric(body: str, brief: ContentBrief) -> bool:
     metric_markers = ["%", "percent", "revenue", "customers", "users", "growth", "increased", "decreased", "x "]
     lowered = body.lower()
@@ -539,6 +630,96 @@ class InstagramCaptionAdapter:
             checks.append("Keeps caption grounded with a source-backed note.")
         if has_unsupported_metric(body, brief):
             checks.append("Review any metric-like claim; caption rules prohibit unsupported numbers or growth claims.")
+        return checks
+
+
+class InstagramPostAdapter:
+    platform = "instagram"
+    content_type = "post"
+    adapter_name = "instagram_post"
+    adapter_version = "1.0.0"
+    prompt_version = prompt_versions.version("instagram_post")
+    rules = [
+        "Render as an Instagram post with visual direction, post copy, and hashtags.",
+        "Lead with the visual idea and keep copy concise.",
+        "Use short lines rather than LinkedIn-style paragraphs.",
+        "Preserve only source-backed claims from the platform-independent brief.",
+        "Keep hashtags supportive; hashtags must not carry factual claims.",
+    ]
+
+    def generation_spec(self, brief: ContentBrief) -> DraftGenerationSpec:
+        return DraftGenerationSpec(
+            content_brief_id=brief.id,
+            platform=self.platform,
+            content_type=self.content_type,
+            adapter_name=self.adapter_name,
+            adapter_version=self.adapter_version,
+            prompt_version=self.prompt_version,
+            rules=self.rules,
+            metadata={
+                "brief_prompt_version": brief.prompt_version,
+                "max_characters": 900,
+                "structure": "visual_direction, post_copy, hashtags",
+            },
+        )
+
+    def variants(self) -> list[DraftVariant]:
+        return [
+            DraftVariant("Build from what is true.", "minimal"),
+            DraftVariant("Real context makes better content.", "educational"),
+            DraftVariant("Before you post, prove it.", "direct"),
+        ]
+
+    def render(
+        self,
+        variant: DraftVariant,
+        profile: CompanyProfile,
+        brief: ContentBrief,
+        opportunity: ContentOpportunity,
+    ) -> RenderedDraft:
+        proof = clean_public_sentence(brief.supporting_points[0] if brief.supporting_points else opportunity.summary, 260)
+        visual = "A clean visual with one approved source note, one draft card, and one review check."
+        if variant.style == "educational":
+            copy = (
+                f"{variant.hook}\n\n"
+                f"{brief.key_message}\n\n"
+                "The useful part is knowing what is approved, source-backed, and ready for review.\n\n"
+                f"Source-backed note: {proof}"
+            )
+        elif variant.style == "direct":
+            copy = (
+                f"{variant.hook}\n\n"
+                "A strong post should not outrun its evidence.\n\n"
+                f"Use approved context first. Source-backed note: {proof}"
+            )
+        else:
+            copy = f"{variant.hook}\n\n{brief.key_message}\n\nSource-backed note: {proof}"
+        body = (
+            f"Visual direction: {visual}\n\n"
+            "Post copy:\n"
+            f"{copy}\n\n"
+            "Hashtags: #BuildInPublic #ProductJudgment #SourceBacked"
+        )
+        return RenderedDraft(
+            body=body[:900],
+            hook=variant.hook,
+            hashtags=["#BuildInPublic", "#ProductJudgment", "#SourceBacked"],
+        )
+
+    def quality_checks(self, body: str, profile: CompanyProfile, brief: ContentBrief) -> list[str]:
+        checks: list[str] = []
+        if len(body) <= 900:
+            checks.append("Fits concise Instagram post guidance.")
+        else:
+            checks.append("Review Instagram post length; this workflow expects concise copy.")
+        if body.startswith("Visual direction:") and "Post copy:" in body:
+            checks.append("Includes visual direction before Instagram post copy.")
+        if "Hashtags:" in body:
+            checks.append("Includes supportive Instagram hashtags.")
+        if "Source-backed note:" in body:
+            checks.append("Keeps Instagram post grounded with a source-backed note.")
+        if has_unsupported_metric(body, brief):
+            checks.append("Review any metric-like claim; Instagram post rules prohibit unsupported numbers or growth claims.")
         return checks
 
 

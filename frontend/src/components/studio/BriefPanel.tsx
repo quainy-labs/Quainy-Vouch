@@ -1,8 +1,10 @@
 import { FileCheck2 } from "lucide-react";
-import type { ContentBrief, FormatChoice } from "../../types";
+import type { ContentBrief, FormatChoice, Opportunity } from "../../types";
 
 type BriefPanelProps = {
   brief: ContentBrief;
+  opportunity: Opportunity | null;
+  opportunityLabel: string;
   selectedFormatLabel: string;
   formatChoice: FormatChoice;
   busy: boolean;
@@ -14,6 +16,8 @@ type BriefPanelProps = {
 
 export function BriefPanel({
   brief,
+  opportunity,
+  opportunityLabel,
   selectedFormatLabel,
   formatChoice,
   busy,
@@ -27,15 +31,14 @@ export function BriefPanel({
       <div className="section-heading">
         <div>
           <p className="eyebrow">Brief</p>
-          <h2>Source brief for {selectedFormatLabel}</h2>
+          <h2>{opportunity?.title ?? "Brief exists for this opportunity"}</h2>
+          <p className="empty-results">Review the source-backed message, choose a format, then generate draft variants.</p>
         </div>
         <div className="format-actions">
           <select value={formatChoice} onChange={(event) => onSelectContentFormat(event.target.value as FormatChoice)}>
-            <option value="linkedin_company_post">LinkedIn post</option>
-            <option value="blog_outline">Blog outline</option>
-            <option value="newsletter_email">Newsletter email</option>
-            <option value="instagram_caption">Instagram caption</option>
-            <option value="instagram_carousel_outline">Instagram carousel</option>
+            <option value="linkedin_post">LinkedIn post</option>
+            <option value="reddit_post">Reddit post</option>
+            <option value="instagram_post">Instagram post</option>
           </select>
           <button
             className="icon-button primary"
@@ -44,20 +47,38 @@ export function BriefPanel({
             title={canEditContent ? "Generate drafts" : permissionMessage}
           >
             <FileCheck2 size={18} />
-            <span>Generate drafts</span>
+            <span>{busy ? "Generating..." : "Generate drafts"}</span>
           </button>
         </div>
       </div>
+      {busy && (
+        <div className="work-status" role="status">
+          <strong>Generating drafts</strong>
+          <span>Creating variants from the current source-backed brief.</span>
+        </div>
+      )}
       <div className="brief-grid">
         <section className="brief-summary">
-          <span>Selected format</span>
-          <p>{selectedFormatLabel}</p>
-          <span>Objective</span>
-          <p>{brief.objective}</p>
-          <span>Audience</span>
-          <p>{brief.audience}</p>
-          <span>Key message</span>
-          <p>{brief.key_message}</p>
+          <div>
+            <span>Opportunity ID</span>
+            <p>{opportunityLabel}</p>
+          </div>
+          <div>
+            <span>Selected format</span>
+            <p>{selectedFormatLabel}</p>
+          </div>
+          <div>
+            <span>Objective</span>
+            <p>{brief.objective}</p>
+          </div>
+          <div>
+            <span>Audience</span>
+            <p>{brief.audience}</p>
+          </div>
+          <div>
+            <span>Key message</span>
+            <p>{brief.key_message}</p>
+          </div>
         </section>
         <section className="brief-list">
           <h3>Supporting points</h3>

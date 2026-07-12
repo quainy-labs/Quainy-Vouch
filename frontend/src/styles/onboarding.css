@@ -7,34 +7,42 @@
 
 .onboarding-banner {
   display: grid;
-  grid-template-columns: minmax(0, 1.4fr) auto auto;
+  grid-template-columns: minmax(0, 1fr) auto auto;
   align-items: center;
-  gap: 18px;
-  border-bottom: 1px solid var(--line);
+  gap: 14px;
+  width: min(1120px, calc(100% - 48px));
+  margin: 16px auto 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
   background: #edf7f2;
-  padding: 18px 32px;
+  padding: 14px 16px;
+  box-shadow: var(--shadow-soft);
 }
 
 .onboarding-banner h2 {
   margin: 4px 0;
   color: var(--graphite);
-  font-size: 1.35rem;
+  font-size: 1.05rem;
   letter-spacing: 0;
+}
+
+.onboarding-banner p:not(.eyebrow) {
+  font-size: 0.9rem;
 }
 
 .onboarding-progress {
   display: grid;
   gap: 4px;
-  min-width: 180px;
+  min-width: 150px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.74);
-  padding: 12px;
+  padding: 10px;
 }
 
 .onboarding-progress strong {
   color: var(--green-dark);
-  font-size: 1.45rem;
+  font-size: 1.2rem;
   line-height: 1;
 }
 

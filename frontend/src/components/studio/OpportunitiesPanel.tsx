@@ -51,9 +51,15 @@ export function OpportunitiesPanel({
           title={canEditContent ? "Generate opportunities" : permissionMessage}
         >
           <RefreshCcw size={18} />
-          <span>Generate</span>
+          <span>{busy ? "Generating..." : "Generate"}</span>
         </button>
       </div>
+      {busy && (
+        <div className="work-status" role="status">
+          <strong>Working on Studio request</strong>
+          <span>Generating opportunities or creating a brief from approved company context.</span>
+        </div>
+      )}
       {rankedOpportunities.length > 0 && (
         <div className="opportunity-rank-bar">
           <div>
@@ -80,30 +86,41 @@ export function OpportunitiesPanel({
       <div className="opportunity-grid">
         {visibleOpportunities.length > 0 ? (
           visibleOpportunities.map((opportunity, index) => (
-            <button
+            <article
               className={`opportunity-card ${selectedOpportunity?.id === opportunity.id ? "selected" : ""} ${
                 opportunity.status === "warned" ? "warned" : ""
               }`}
               key={opportunity.id}
-              onClick={() => void onCreateBrief(opportunity)}
-              disabled={busy || !canEditContent}
             >
-              <div className="opportunity-scores">
-                <span>#{index + 1}</span>
+              <h3>{opportunity.title}</h3>
+              <div className="opportunity-scores" aria-label={`Opportunity ${index + 1} ranking signals`}>
+                <span>Opportunity #{index + 1}</span>
                 <span className="score">{Math.round(opportunity.relevance_score * 100)}% relevant</span>
-                <span>{Math.round(opportunity.freshness_score * 100)}% fresh</span>
                 <span>{Math.round(opportunity.confidence_score * 100)}% confidence</span>
                 <span>
                   {opportunity.source_ids.length} source{opportunity.source_ids.length === 1 ? "" : "s"}
                 </span>
-                {opportunity.status === "warned" && <span>warning</span>}
+                {opportunity.status === "warned" && <span className="warning-badge">Needs context</span>}
               </div>
-              <h3>{opportunity.title}</h3>
-              <p>{opportunity.reason_today}</p>
-              <small>
-                Evidence: {opportunity.source_ids.map((sourceId) => sourceTitleById.get(sourceId) ?? sourceId).join(", ") || "No approved source"}
+              <p className="opportunity-description">{opportunity.reason_today}</p>
+              <small className="opportunity-evidence">
+                Source support: {opportunity.source_ids.map((sourceId) => sourceTitleById.get(sourceId) ?? sourceId).join(", ") || "No approved source"}
               </small>
-              <small>Next step: create a brief from this source-backed angle.</small>
+              <div className="opportunity-card-actions">
+                <button
+                  className="icon-button primary"
+                  onClick={() => void onCreateBrief(opportunity)}
+                  disabled={busy || !canEditContent}
+                  type="button"
+                  title={canEditContent ? "Create brief from this angle" : permissionMessage}
+                >
+                  <Plus size={16} />
+                  <span>Create brief</span>
+                </button>
+                <button className="icon-button" disabled title="Opportunity feedback is not connected yet" type="button">
+                  Not relevant
+                </button>
+              </div>
               {opportunityWarnings(opportunity).length > 0 && (
                 <ul className="warning-list">
                   {opportunityWarnings(opportunity).map((warning) => (
@@ -111,7 +128,7 @@ export function OpportunitiesPanel({
                   ))}
                 </ul>
               )}
-            </button>
+            </article>
           ))
         ) : (
           <div className="empty-opportunities">

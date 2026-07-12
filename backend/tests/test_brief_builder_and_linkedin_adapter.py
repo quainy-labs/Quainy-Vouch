@@ -3,8 +3,10 @@ from app.format_adapters import (
     BlogOutlineAdapter,
     InstagramCaptionAdapter,
     InstagramCarouselOutlineAdapter,
+    InstagramPostAdapter,
     LinkedInCompanyPostAdapter,
     NewsletterEmailAdapter,
+    RedditPostAdapter,
 )
 from app.schemas import CompanyProfile, ContentOpportunity, SourceChunk
 
@@ -230,3 +232,54 @@ def test_instagram_adapters_keep_visual_constraints_separate_from_core_message()
     assert "Caption note:" in carousel.body
     assert any("short Instagram caption" in check for check in caption_checks)
     assert any("visual direction and five slides" in check for check in carousel_checks)
+
+
+def test_reddit_and_instagram_post_adapters_are_supported_public_formats():
+    profile = CompanyProfile(
+        organization_id="org_social",
+        audience="builders",
+        preferred_phrases=["approved context"],
+    )
+    opportunity = ContentOpportunity(
+        organization_id="org_social",
+        title="Turn approved context into public posts",
+        summary="Approved context can support useful public posts.",
+        reason_today="Approved sources explain a timely source-grounded workflow.",
+        source_ids=["src_social"],
+        freshness_score=0.82,
+        relevance_score=0.84,
+        confidence_score=0.86,
+    )
+    brief = PlatformIndependentBriefBuilder().build(
+        profile,
+        opportunity,
+        [
+            SourceChunk(
+                source_id="src_social",
+                organization_id="org_social",
+                chunk_text="Approved context helps builders create source-backed public posts with human review.",
+                chunk_index=0,
+            )
+        ],
+    )
+    reddit_adapter = RedditPostAdapter()
+    instagram_adapter = InstagramPostAdapter()
+
+    reddit = reddit_adapter.render(reddit_adapter.variants()[0], profile, brief, opportunity)
+    instagram = instagram_adapter.render(instagram_adapter.variants()[0], profile, brief, opportunity)
+    reddit_checks = reddit_adapter.quality_checks(reddit.body, profile, brief)
+    instagram_checks = instagram_adapter.quality_checks(instagram.body, profile, brief)
+
+    assert reddit_adapter.generation_spec(brief).platform == "reddit"
+    assert reddit_adapter.generation_spec(brief).content_type == "post"
+    assert reddit_adapter.generation_spec(brief).prompt_version == "reddit_post.v1"
+    assert "Subreddit fit:" in reddit.body
+    assert "Discussion question:" in reddit.body
+    assert "#" not in reddit.body
+    assert any("Reddit post structure" in check for check in reddit_checks)
+    assert instagram_adapter.generation_spec(brief).platform == "instagram"
+    assert instagram_adapter.generation_spec(brief).content_type == "post"
+    assert instagram_adapter.generation_spec(brief).prompt_version == "instagram_post.v1"
+    assert instagram.body.startswith("Visual direction:")
+    assert "Post copy:" in instagram.body
+    assert any("Instagram post" in check for check in instagram_checks)

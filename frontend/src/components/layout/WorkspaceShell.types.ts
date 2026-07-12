@@ -61,8 +61,6 @@ export type WorkspaceShellProps = {
   approvedSources: Source[];
   disabledSources: Source[];
   archivedSources: Source[];
-  railSources: Source[];
-  railSourceOverflow: number;
   selectedSourceId: string | null;
   libraryMetrics: LibraryMetric[];
   statusOptions: LibraryStatusOption[];
@@ -151,6 +149,10 @@ export type WorkspaceShellProps = {
   onCommitSourceForm: (form: SourceForm) => void;
   onSourceFile: (file: File | undefined) => void | Promise<void>;
   onUpdateSourceStatus: (sourceId: string, approvalStatus: string) => void | Promise<void>;
+  onUpdateSource: (
+    sourceId: string,
+    payload: { title?: string; uri?: string | null; raw_text?: string; approval_status?: string; freshness_days?: number },
+  ) => void | Promise<void>;
   onRefreshSource: (sourceId: string) => void | Promise<void>;
   onCalendarEventFormChange: (form: CalendarEventForm) => void;
   onTrendSignalFormChange: (form: TrendSignalForm) => void;

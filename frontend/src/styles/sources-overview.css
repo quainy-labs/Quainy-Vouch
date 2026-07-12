@@ -6,8 +6,66 @@
 .source-health-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 22px;
+}
+
+.source-overview-list,
+.source-browser,
+.source-create-panel {
+  display: grid;
   gap: 14px;
-  margin-bottom: 18px;
+}
+
+.source-list-table {
+  display: grid;
+  gap: 8px;
+}
+
+.source-list-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  min-height: 64px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--paper);
+  color: var(--ink);
+  padding: 12px;
+  text-align: left;
+}
+
+.source-list-item:hover,
+.source-list-item.active {
+  border-color: rgba(22, 119, 92, 0.28);
+  background: var(--mint);
+}
+
+.source-list-item div {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.source-list-item strong,
+.source-list-item span:not(.status-pill) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.source-list-item strong {
+  color: var(--graphite);
+}
+
+.source-list-item span:not(.status-pill) {
+  color: var(--muted);
+  font-size: 0.84rem;
+}
+
+.source-library-grid.browse-mode {
+  grid-template-columns: minmax(280px, 0.58fr) minmax(360px, 1fr);
 }
 
 .source-health-tile,
@@ -19,18 +77,19 @@
 
 .source-health-tile {
   display: grid;
-  gap: 6px;
-  padding: 13px;
+  gap: 8px;
+  min-height: 128px;
+  padding: 15px;
 }
 
 .source-health-tile.healthy {
-  border-color: rgba(15, 159, 120, 0.42);
-  background: rgba(229, 245, 237, 0.78);
+  border-color: rgba(22, 119, 92, 0.24);
+  background: var(--mint);
 }
 
 .source-health-tile.blocked {
-  border-color: rgba(233, 87, 63, 0.42);
-  background: rgba(255, 250, 248, 0.88);
+  border-color: rgba(201, 79, 61, 0.36);
+  background: var(--coral-soft);
 }
 
 .source-health-tile span,
@@ -45,7 +104,7 @@
 
 .source-health-tile strong {
   color: var(--graphite);
-  font-size: 1.45rem;
+  font-size: 1.7rem;
   line-height: 1;
 }
 
@@ -92,7 +151,7 @@
 
 .readiness-signals {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
   gap: 10px;
 }
 
@@ -100,10 +159,10 @@
   display: grid;
   align-content: start;
   gap: 9px;
-  min-height: 132px;
+  min-height: 136px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: rgba(255, 255, 255, 0.78);
+  background: var(--paper);
   padding: 12px;
 }
 
@@ -144,10 +203,10 @@
 .readiness-recommendations {
   display: grid;
   grid-column: 1 / -1;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
   gap: 10px;
   border-top: 1px solid var(--line);
-  padding-top: 12px;
+  padding-top: 14px;
 }
 
 .readiness-recommendations article {
@@ -156,7 +215,7 @@
   gap: 7px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: rgba(255, 255, 255, 0.8);
+  background: var(--paper);
   padding: 12px;
 }
 
@@ -167,15 +226,15 @@
 
 .source-guide-grid {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 12px;
-  margin-bottom: 22px;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 10px;
+  margin-bottom: 24px;
 }
 
 .source-guide-card {
   display: grid;
   gap: 7px;
-  min-height: 126px;
+  min-height: 118px;
   padding: 14px;
   color: var(--ink);
   text-align: left;
@@ -184,10 +243,9 @@
 
 .source-guide-card:hover,
 .source-guide-card.active {
-  border-color: var(--green);
-  background: rgba(229, 245, 237, 0.86);
-  box-shadow: 0 0 0 4px var(--focus-ring), 0 12px 26px rgba(17, 24, 23, 0.07);
-  transform: translateY(-1px);
+  border-color: rgba(22, 119, 92, 0.32);
+  background: var(--mint);
+  box-shadow: 0 0 0 4px var(--focus-ring);
 }
 
 .source-guide-card strong {

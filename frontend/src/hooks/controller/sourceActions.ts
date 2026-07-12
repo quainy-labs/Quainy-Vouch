@@ -38,6 +38,7 @@ export function createSourceActions(state: WorkspaceControllerState, options: So
   function commitSourceForm(nextForm: SourceForm) {
     state.setSourceForm(nextForm);
     state.setSourceDraftsByType((current) => ({ ...current, [nextForm.source_type]: nextForm }));
+    state.setSourceErrors([]);
   }
 
   function selectSourceType(sourceType: string) {
@@ -93,7 +94,7 @@ export function createSourceActions(state: WorkspaceControllerState, options: So
       await refreshSources(sourceId);
       clearContentAfterSourceChange("Source availability changed. Generate opportunities again so disabled or archived sources are excluded.");
       await options.refreshProductSurfaces();
-      state.setNotice(`Source marked ${approvalStatus}.`);
+      state.setNotice("");
     } finally {
       state.setBusy(false);
     }
@@ -107,7 +108,27 @@ export function createSourceActions(state: WorkspaceControllerState, options: So
       await refreshSources(sourceId);
       clearContentAfterSourceChange("Source was re-ingested. Generate opportunities again to use the refreshed evidence.");
       await options.refreshProductSurfaces();
-      state.setNotice("Source refreshed and re-ingested.");
+      state.setNotice("");
+    } finally {
+      state.setBusy(false);
+    }
+  }
+
+  async function updateSource(
+    sourceId: string,
+    payload: { title?: string; uri?: string | null; raw_text?: string; approval_status?: string; freshness_days?: number },
+  ) {
+    if (!options.requirePermission(options.canEditKnowledge, options.knowledgePermissionMessage)) return;
+    state.setBusy(true);
+    try {
+      await api<Source>(`/sources/${sourceId}`, {
+        method: "PATCH",
+        body: JSON.stringify(payload),
+      });
+      await refreshSources(sourceId);
+      clearContentAfterSourceChange("Source changed. Generate opportunities again to use the latest approved knowledge.");
+      await options.refreshProductSurfaces();
+      state.setNotice("");
     } finally {
       state.setBusy(false);
     }
@@ -139,6 +160,7 @@ export function createSourceActions(state: WorkspaceControllerState, options: So
     refreshSource,
     refreshSources,
     selectSourceType,
+    updateSource,
     updateSourceStatus,
   };
 }

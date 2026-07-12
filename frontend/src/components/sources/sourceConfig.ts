@@ -109,8 +109,8 @@ export const sourceTypeText: Record<string, SourceCopy> = {
 };
 
 export const readinessCopy: Record<string, string> = {
-  strong: "Strong evidence base. Recommendations can lean on profile, sources, and retrieval.",
-  ready: "Ready for generation. Add more context over time to improve ranking accuracy.",
+  strong: "Strong evidence base for the current workflow. Keep adding context as the company changes.",
+  ready: "Enough approved context for generation. Add more source material over time to improve ranking accuracy.",
   building: "Usable, but still missing context that would make suggestions sharper.",
   blocked: "Needs approved company context before reliable opportunities and drafts.",
 };

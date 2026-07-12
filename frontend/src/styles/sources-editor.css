@@ -85,6 +85,12 @@
   color: var(--green-dark);
 }
 
+.source-actions .icon-button.primary {
+  border-color: var(--green);
+  background: var(--green);
+  color: white;
+}
+
 .source-form {
   display: grid;
   gap: 16px;
@@ -92,6 +98,46 @@
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.82);
   padding: 20px;
+}
+
+.source-edit-panel,
+.source-refresh-panel {
+  display: grid;
+  gap: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-alt);
+  padding: 14px;
+}
+
+.source-edit-panel {
+  margin-bottom: 14px;
+}
+
+.source-edit-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(112px, 0.25fr) minmax(112px, 0.25fr);
+  gap: 10px;
+}
+
+.source-edit-grid .wide {
+  grid-column: 1 / -1;
+}
+
+.source-edit-grid input,
+.source-edit-grid select,
+.source-edit-grid textarea {
+  width: 100%;
+  min-height: 42px;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: var(--paper);
+  color: var(--ink);
+  padding: 10px 11px;
+}
+
+.source-edit-panel .source-actions {
+  margin-bottom: 0;
 }
 
 .source-mode-note span,

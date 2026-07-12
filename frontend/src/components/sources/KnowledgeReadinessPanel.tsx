@@ -13,12 +13,19 @@ function actionLabel(action: string): string {
   return "Add sources";
 }
 
+function statusLabel(score: number): string {
+  if (score >= 0.8) return "Strong";
+  if (score >= 0.45) return "Developing";
+  if (score > 0) return "Started";
+  return "Missing";
+}
+
 export function KnowledgeReadinessPanel({ readiness, copy, priorityLabels, onAction }: KnowledgeReadinessPanelProps) {
   return (
     <div className={`readiness-panel ${readiness.status}`}>
       <div className="readiness-score">
-        <span>Knowledge readiness</span>
-        <strong>{Math.round(readiness.overall_score * 100)}%</strong>
+        <span>Knowledge coverage</span>
+        <strong>{readiness.status.replace("_", " ")}</strong>
         <p>{copy[readiness.status] ?? copy.building}</p>
       </div>
       <div className="readiness-signals">
@@ -26,7 +33,7 @@ export function KnowledgeReadinessPanel({ readiness, copy, priorityLabels, onAct
           <article className={`readiness-signal ${signal.status}`} key={signal.key}>
             <div>
               <span>{signal.label}</span>
-              <strong>{Math.round(signal.score * 100)}%</strong>
+              <strong>{statusLabel(signal.score)}</strong>
             </div>
             <div className="readiness-meter" aria-hidden="true">
               <span style={{ width: `${Math.round(signal.score * 100)}%` }} />

@@ -48,6 +48,16 @@ class PromptVersionRegistry:
                 version="linkedin_company_post.v1",
                 description="Render a LinkedIn company post from a source-grounded brief.",
             ),
+            "reddit_post": PromptVersion(
+                key="reddit_post",
+                version="reddit_post.v1",
+                description="Render a source-grounded Reddit post with a discussion prompt and community-aware tone.",
+            ),
+            "instagram_post": PromptVersion(
+                key="instagram_post",
+                version="instagram_post.v1",
+                description="Render a visual-first Instagram post from a source-grounded brief.",
+            ),
             "blog_outline": PromptVersion(
                 key="blog_outline",
                 version="blog_outline.v1",

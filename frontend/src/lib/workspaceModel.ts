@@ -39,8 +39,6 @@ type BuildWorkspaceModelInput = {
   visibleOpportunityCount: number;
 };
 
-const railSourceLimit = 25;
-
 const statusOptions: Array<{ id: LibraryStatusFilter; label: string }> = [
   { id: "all", label: "All" },
   { id: "opportunity", label: "Opportunities" },
@@ -76,9 +74,7 @@ export function buildWorkspaceModel({
   visibleOpportunityCount,
 }: BuildWorkspaceModelInput) {
   const approvedSourceCount = bootstrap.sources.filter((source) => source.approval_status === "approved").length;
-  const healthLabel = knowledgeReadiness
-    ? `${Math.round(knowledgeReadiness.overall_score * 100)}% knowledge ready`
-    : `${approvedSourceCount} approved sources`;
+  const healthLabel = `${approvedSourceCount} approved source${approvedSourceCount === 1 ? "" : "s"}`;
 
   const currentRole = currentUser?.role ?? "viewer";
   const canManageWorkspace = currentRole === "owner";
@@ -167,10 +163,6 @@ export function buildWorkspaceModel({
   const disabledSources = bootstrap.sources.filter((source) => source.approval_status === "disabled");
   const archivedSources = bootstrap.sources.filter((source) => source.approval_status === "archived");
   const activeSourceSummary = summarizeNames(approvedSources.map((source) => source.title), 3);
-  const railSources = [...bootstrap.sources]
-    .sort((left, right) => new Date(right.updated_at).getTime() - new Date(left.updated_at).getTime())
-    .slice(0, railSourceLimit);
-  const railSourceOverflow = Math.max(bootstrap.sources.length - railSourceLimit, 0);
   const availableLibraryPlatforms = Array.from(
     new Set(contentArtifacts.map((artifact) => artifact.platform).filter((platform): platform is string => Boolean(platform))),
   );
@@ -236,8 +228,6 @@ export function buildWorkspaceModel({
     approvedSources,
     disabledSources,
     archivedSources,
-    railSources,
-    railSourceOverflow,
     availableLibraryPlatforms,
     statusOptions,
     rankedOpportunities,

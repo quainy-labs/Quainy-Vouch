@@ -1,10 +1,11 @@
-import { Plus, Save, ShieldCheck } from "lucide-react";
+import { Save } from "lucide-react";
 import type { ApprovalPolicy, ApprovalPolicyForm, UserForm, WorkspaceUser } from "../../types";
 
 type TeamSettingsPanelProps = {
   busy: boolean;
   canManageWorkspace: boolean;
   workspacePermissionMessage: string;
+  panel?: "all" | "team" | "approval";
   users: WorkspaceUser[];
   userForm: UserForm;
   approvalPolicy: ApprovalPolicy | null;
@@ -20,6 +21,7 @@ export function TeamSettingsPanel({
   busy,
   canManageWorkspace,
   workspacePermissionMessage,
+  panel = "all",
   users,
   userForm,
   approvalPolicy,
@@ -30,59 +32,78 @@ export function TeamSettingsPanel({
   onUpdateUserRole,
   onSaveApprovalPolicy,
 }: TeamSettingsPanelProps) {
+  const showTeam = panel === "all" || panel === "team";
+  const showApproval = panel === "all" || panel === "approval";
+
   return (
     <section className="panel band team-panel">
-      <div className="section-heading">
-        <div>
-          <p className="eyebrow">Team</p>
-          <h2>Users and roles</h2>
-        </div>
-        <button
-          className="icon-button primary"
-          onClick={() => void onAddUser()}
-          disabled={busy || !canManageWorkspace || !userForm.name.trim()}
-          title={canManageWorkspace ? "Add user" : workspacePermissionMessage}
-        >
-          <Plus size={18} />
-          <span>Add user</span>
-        </button>
-      </div>
-      <div className="team-form">
-        <input value={userForm.name} onChange={(event) => onUserFormChange({ ...userForm, name: event.target.value })} placeholder="Name" />
-        <input value={userForm.email} onChange={(event) => onUserFormChange({ ...userForm, email: event.target.value })} placeholder="Email" />
-        <select value={userForm.role} onChange={(event) => onUserFormChange({ ...userForm, role: event.target.value as WorkspaceUser["role"] })}>
-          <option value="viewer">Viewer</option>
-          <option value="editor">Editor</option>
-          <option value="reviewer">Reviewer</option>
-          <option value="owner">Owner</option>
-        </select>
-      </div>
-      <div className="team-list">
-        {users.map((user) => (
-          <article className="team-row" key={user.id}>
+      {showTeam && (
+        <>
+          <div className="section-heading">
             <div>
-              <strong>{user.name}</strong>
-              <span>{user.email || user.id}</span>
+              <p className="eyebrow">Team</p>
+              <h2>Users and roles</h2>
             </div>
-            <select
-              value={user.role}
-              onChange={(event) => void onUpdateUserRole(user.id, event.target.value as WorkspaceUser["role"])}
-              disabled={busy || !canManageWorkspace || user.id === "local_user"}
+            <button
+              className="icon-button primary"
+              onClick={() => void onAddUser()}
+              disabled={busy || !canManageWorkspace || !userForm.name.trim()}
+              title={canManageWorkspace ? "Add user" : workspacePermissionMessage}
             >
+              <Save size={18} />
+              <span>Save user</span>
+            </button>
+          </div>
+          <div className="team-form">
+            <input value={userForm.name} onChange={(event) => onUserFormChange({ ...userForm, name: event.target.value })} placeholder="Name" />
+            <input value={userForm.email} onChange={(event) => onUserFormChange({ ...userForm, email: event.target.value })} placeholder="Email" />
+            <select value={userForm.role} onChange={(event) => onUserFormChange({ ...userForm, role: event.target.value as WorkspaceUser["role"] })}>
               <option value="viewer">Viewer</option>
               <option value="editor">Editor</option>
               <option value="reviewer">Reviewer</option>
               <option value="owner">Owner</option>
             </select>
-          </article>
-        ))}
-      </div>
-      {approvalPolicy && approvalPolicyDraft && (
-        <div className="approval-policy-box">
-          <div className="panel-title">
-            <ShieldCheck size={17} />
-            <h2>Approval policy</h2>
           </div>
+          <div className="team-list">
+            {users.map((user) => (
+              <article className="team-row" key={user.id}>
+                <div>
+                  <strong>{user.name}</strong>
+                  <span>{user.email || user.id}</span>
+                </div>
+                <select
+                  value={user.role}
+                  onChange={(event) => void onUpdateUserRole(user.id, event.target.value as WorkspaceUser["role"])}
+                  disabled={busy || !canManageWorkspace || user.id === "local_user"}
+                >
+                  <option value="viewer">Viewer</option>
+                  <option value="editor">Editor</option>
+                  <option value="reviewer">Reviewer</option>
+                  <option value="owner">Owner</option>
+                </select>
+              </article>
+            ))}
+          </div>
+        </>
+      )}
+      {showApproval && approvalPolicy && approvalPolicyDraft && (
+        <>
+          <div className="section-heading">
+            <div>
+              <p className="eyebrow">Approval</p>
+              <h2>Approval policy</h2>
+            </div>
+            <button
+              className="icon-button primary"
+              onClick={() => void onSaveApprovalPolicy()}
+              disabled={busy || !canManageWorkspace}
+              title={canManageWorkspace ? "Save approval policy" : workspacePermissionMessage}
+            >
+              <Save size={18} />
+              <span>Save policy</span>
+            </button>
+          </div>
+        <div className="approval-policy-box">
           <div className="policy-grid">
             <label>
               <span>Required reviewers</span>
@@ -117,16 +138,8 @@ export function TeamSettingsPanel({
               <span>Allow logged risk override</span>
             </label>
           </div>
-          <button
-            className="icon-button"
-            onClick={() => void onSaveApprovalPolicy()}
-            disabled={busy || !canManageWorkspace}
-            title={canManageWorkspace ? "Save approval policy" : workspacePermissionMessage}
-          >
-            <Save size={18} />
-            <span>Save policy</span>
-          </button>
         </div>
+        </>
       )}
     </section>
   );

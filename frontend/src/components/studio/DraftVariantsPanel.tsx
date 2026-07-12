@@ -1,4 +1,4 @@
-import { Sparkles } from "lucide-react";
+import { ShieldCheck, Sparkles } from "lucide-react";
 import type { Draft } from "../../types";
 import { draftFormatLabel } from "../../lib/forms";
 
@@ -7,9 +7,10 @@ type DraftVariantsPanelProps = {
   selectedDraft: Draft | null;
   selectedDraftMatchesFormat: boolean;
   onSelectDraft: (draft: Draft) => void;
+  onReviewDraft: (draft: Draft) => void;
 };
 
-export function DraftVariantsPanel({ drafts, selectedDraft, selectedDraftMatchesFormat, onSelectDraft }: DraftVariantsPanelProps) {
+export function DraftVariantsPanel({ drafts, selectedDraft, selectedDraftMatchesFormat, onSelectDraft, onReviewDraft }: DraftVariantsPanelProps) {
   return (
     <section className="panel band">
       <div className="section-heading">
@@ -17,7 +18,14 @@ export function DraftVariantsPanel({ drafts, selectedDraft, selectedDraftMatches
           <p className="eyebrow">Drafts</p>
           <h2>{draftFormatLabel(selectedDraft)}</h2>
         </div>
-        <Sparkles size={20} />
+        {selectedDraft ? (
+          <button className="icon-button primary" type="button" onClick={() => onReviewDraft(selectedDraft)} title="Review this selected draft variant">
+            <ShieldCheck size={18} />
+            <span>Review this variant</span>
+          </button>
+        ) : (
+          <Sparkles size={20} />
+        )}
       </div>
       <div className="draft-tabs">
         {drafts.map((draft, index) => (

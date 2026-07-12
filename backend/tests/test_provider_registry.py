@@ -20,6 +20,8 @@ def test_prompt_registry_returns_known_versions():
     assert prompt_versions.version("risk_check") == "risk_check.v1"
     assert prompt_versions.version("strategy_recommendations") == "strategy_recommendations.v1"
     assert prompt_versions.version("linkedin_company_post") == "linkedin_company_post.v1"
+    assert prompt_versions.version("reddit_post") == "reddit_post.v1"
+    assert prompt_versions.version("instagram_post") == "instagram_post.v1"
     assert prompt_versions.version("blog_outline") == "blog_outline.v1"
     assert prompt_versions.version("newsletter_email") == "newsletter_email.v1"
     assert prompt_versions.version("instagram_caption") == "instagram_caption.v1"

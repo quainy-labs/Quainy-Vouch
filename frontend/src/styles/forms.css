@@ -139,6 +139,23 @@
   padding: 10px 11px;
 }
 
+.field small,
+.refresh-field small {
+  color: #8d2516;
+  font-size: 0.78rem;
+  font-weight: 800;
+  line-height: 1.35;
+}
+
+.field.field-error input,
+.field.field-error textarea,
+.field.field-error select,
+.refresh-field .input-error {
+  border-color: var(--coral);
+  background: var(--coral-soft);
+  box-shadow: 0 0 0 3px rgba(201, 79, 61, 0.12);
+}
+
 .field input,
 .field select {
   min-height: 40px;
