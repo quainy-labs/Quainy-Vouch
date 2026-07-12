@@ -71,6 +71,47 @@ def test_opportunity_generation_refuses_thin_context():
     assert result["message"] == "No strong opportunity found from approved context."
 
 
+def test_opportunity_can_be_marked_not_relevant_and_removed_from_active_list():
+    org = client.post("/organizations", json={"name": "Dismiss Opportunity Org"}).json()
+    client.patch(
+        f"/organizations/{org['id']}/profile",
+        json={
+            "audience": "builders and founders",
+            "content_pillars": ["source-backed communication"],
+        },
+    ).raise_for_status()
+    client.post(
+        f"/organizations/{org['id']}/sources",
+        json={
+            "source_type": "text",
+            "title": "Dismissible opportunity source",
+            "raw_text": (
+                "Source-backed communication helps builders explain approved company knowledge with human review. "
+                "The source includes concrete context for a public update and should stay grounded in evidence. "
+            )
+            * 4,
+            "approval_status": "approved",
+        },
+    ).raise_for_status()
+    opportunity = client.post(f"/organizations/{org['id']}/opportunities/generate").json()["opportunities"][0]
+
+    dismissed = client.post(
+        f"/opportunities/{opportunity['id']}/dismiss",
+        json={"reason": "Not relevant to current campaign."},
+    ).json()
+    fetched = client.get(f"/opportunities/{opportunity['id']}").json()
+    active = client.get(f"/organizations/{org['id']}/opportunities").json()
+    artifacts = client.get(f"/organizations/{org['id']}/content-artifacts").json()
+
+    assert dismissed["status"] == "dismissed"
+    assert fetched["id"] == opportunity["id"]
+    assert fetched["status"] == "dismissed"
+    assert dismissed["metadata"]["dismissal_reason"] == "Not relevant to current campaign."
+    assert all(item["id"] != opportunity["id"] for item in active)
+    dismissed_artifact = next(item for item in artifacts if item["id"] == opportunity["id"])
+    assert dismissed_artifact["status"] == "dismissed"
+
+
 def test_relevance_scorer_penalizes_recent_memory_similarity():
     scorer = RelevanceScorer()
     profile = CompanyProfile(organization_id="org_test", audience="builders")

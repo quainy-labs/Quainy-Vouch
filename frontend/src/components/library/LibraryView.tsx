@@ -1,5 +1,5 @@
 import { FileCheck2, Library } from "lucide-react";
-import type { ContentArtifact, Draft, LibraryPlatformFilter, LibraryStatusFilter } from "../../types";
+import type { ContentArtifact, LibraryPlatformFilter, LibraryStatusFilter } from "../../types";
 
 type LibraryMetric = {
   label: string;
@@ -19,12 +19,11 @@ type LibraryViewProps = {
   platformFilter: LibraryPlatformFilter;
   availablePlatforms: string[];
   artifacts: ContentArtifact[];
-  drafts: Draft[];
   hasVisibleArtifacts: boolean;
   onStatusFilterChange: (status: LibraryStatusFilter) => void;
   onPlatformFilterChange: (platform: LibraryPlatformFilter) => void;
   onOpenStudio: () => void;
-  onOpenDraft: (draft: Draft) => void;
+  onOpenArtifact: (artifact: ContentArtifact) => void | Promise<void>;
 };
 
 export function LibraryView({
@@ -34,13 +33,14 @@ export function LibraryView({
   platformFilter,
   availablePlatforms,
   artifacts,
-  drafts,
   hasVisibleArtifacts,
   onStatusFilterChange,
   onPlatformFilterChange,
   onOpenStudio,
-  onOpenDraft,
+  onOpenArtifact,
 }: LibraryViewProps) {
+  const openableKinds = new Set(["opportunity", "brief", "draft"]);
+
   return (
     <section className="panel band library-panel">
       <div className="section-heading">
@@ -86,7 +86,7 @@ export function LibraryView({
       </div>
       <div className="artifact-grid">
         {artifacts.map((artifact) => {
-          const matchingDraft = drafts.find((draft) => draft.id === artifact.id);
+          const canOpenInStudio = openableKinds.has(artifact.kind) && !(artifact.kind === "opportunity" && artifact.status === "dismissed");
           return (
             <article className={`artifact-card ${artifact.kind}-artifact`} key={`${artifact.kind}-${artifact.id}`}>
               <span>
@@ -100,8 +100,8 @@ export function LibraryView({
               </small>
               {artifact.scheduled_for && <small>Scheduled {new Date(artifact.scheduled_for).toLocaleString()}</small>}
               {artifact.published_at && <small>Published {new Date(artifact.published_at).toLocaleString()}</small>}
-              {matchingDraft && (
-                <button className="text-action" onClick={() => onOpenDraft(matchingDraft)} type="button">
+              {canOpenInStudio && (
+                <button className="text-action" onClick={() => onOpenArtifact(artifact)} type="button">
                   Open in studio
                 </button>
               )}

@@ -588,7 +588,7 @@ class DataStore:
         return user
 
     def list_organizations(self) -> list[Organization]:
-        return list(self.organizations.values())
+        return [organization for organization in self.organizations.values() if organization.status == "active"]
 
     def get_organization(self, organization_id: str) -> Organization:
         if organization_id not in self.organizations:
@@ -606,6 +606,22 @@ class DataStore:
         updated = org.model_copy(update={**updates, "updated_at": now_utc()})
         self.organizations[organization_id] = updated
         self.log(organization_id, "organization.updated", "organization", organization_id, {"fields": sorted(updates)}, actor_id)
+        return updated
+
+    def deactivate_organization(self, organization_id: str, actor_id: str = "local_user") -> Organization:
+        self.require_role(organization_id, actor_id, {UserRole.owner})
+        org = self.get_organization(organization_id)
+        updated = org.model_copy(update={"status": "deactivated", "updated_at": now_utc()})
+        self.organizations[organization_id] = updated
+        self.log(organization_id, "organization.deactivated", "organization", organization_id, {}, actor_id)
+        return updated
+
+    def activate_organization(self, organization_id: str, actor_id: str = "local_user") -> Organization:
+        self.require_role(organization_id, actor_id, {UserRole.owner})
+        org = self.get_organization(organization_id)
+        updated = org.model_copy(update={"status": "active", "updated_at": now_utc()})
+        self.organizations[organization_id] = updated
+        self.log(organization_id, "organization.activated", "organization", organization_id, {}, actor_id)
         return updated
 
     def delete_organization(self, organization_id: str, actor_id: str = "local_user") -> DeletionReceipt:
@@ -1741,6 +1757,14 @@ class DataStore:
             raise NotFoundError("Draft not found")
         return self.drafts[draft_id]
 
+    def list_drafts_for_brief(self, brief_id: str) -> list[Draft]:
+        self.get_brief(brief_id)
+        return sorted(
+            [draft for draft in self.drafts.values() if draft.content_brief_id == brief_id],
+            key=lambda draft: draft.updated_at,
+            reverse=True,
+        )
+
     def list_draft_decisions(self, draft_id: str) -> list[ApprovalDecision]:
         self.get_draft(draft_id)
         return sorted(
@@ -1768,7 +1792,34 @@ class DataStore:
         }
 
     def list_opportunities(self, organization_id: str) -> list[ContentOpportunity]:
-        return [opportunity for opportunity in self.opportunities.values() if opportunity.organization_id == organization_id]
+        return [
+            opportunity
+            for opportunity in self.opportunities.values()
+            if opportunity.organization_id == organization_id and opportunity.status != "dismissed"
+        ]
+
+    def dismiss_opportunity(
+        self,
+        opportunity_id: str,
+        payload: ReviewDecisionCreate | None = None,
+        actor_id: str = "local_user",
+    ) -> ContentOpportunity:
+        opportunity = self.get_opportunity(opportunity_id)
+        opportunity.status = "dismissed"
+        opportunity.metadata["dismissed_at"] = now_utc().isoformat()
+        opportunity.metadata["dismissed_by"] = actor_id
+        if payload and payload.reason:
+            opportunity.metadata["dismissal_reason"] = payload.reason
+        self.opportunities[opportunity.id] = opportunity
+        self.log(
+            opportunity.organization_id,
+            "opportunity.dismissed",
+            "opportunity",
+            opportunity.id,
+            {"reason": payload.reason if payload else None},
+            actor_id,
+        )
+        return opportunity
 
     def list_memory(self, organization_id: str) -> list[PostMemory]:
         return [post for post in self.memory.values() if post.organization_id == organization_id]
@@ -1781,7 +1832,9 @@ class DataStore:
     def list_content_artifacts(self, organization_id: str) -> list[ContentArtifact]:
         self.get_organization(organization_id)
         artifacts: list[ContentArtifact] = []
-        for opportunity in self.list_opportunities(organization_id):
+        for opportunity in self.opportunities.values():
+            if opportunity.organization_id != organization_id:
+                continue
             artifacts.append(
                 ContentArtifact(
                     id=opportunity.id,

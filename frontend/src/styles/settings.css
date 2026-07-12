@@ -160,7 +160,7 @@
 }
 
 .danger-panel {
-  border-color: rgba(201, 79, 61, 0.28);
+  border-color: rgba(155, 107, 24, 0.22);
 }
 
 .lifecycle-grid {
@@ -179,6 +179,21 @@
   padding: 14px;
 }
 
+.lifecycle-card.warning {
+  border-color: rgba(155, 107, 24, 0.34);
+  background: var(--amber-soft);
+}
+
+.lifecycle-card.activate {
+  border-color: rgba(22, 119, 92, 0.32);
+  background: var(--mint);
+}
+
+.lifecycle-card.danger {
+  border-color: rgba(201, 79, 61, 0.34);
+  background: var(--coral-soft);
+}
+
 .lifecycle-grid strong {
   color: var(--graphite);
 }
@@ -187,4 +202,124 @@
   margin: 0;
   color: var(--muted);
   line-height: 1.45;
+}
+
+.icon-button.warning {
+  border-color: rgba(155, 107, 24, 0.72);
+  background: #fff4cf;
+  color: #754b09;
+}
+
+.icon-button.warning:hover:not(:disabled) {
+  background: #ffe8a3;
+}
+
+.icon-button.activate {
+  border-color: var(--green);
+  background: var(--green);
+  color: white;
+}
+
+.icon-button.activate:hover:not(:disabled) {
+  background: var(--green-dark);
+}
+
+.icon-button.danger {
+  border-color: rgba(201, 79, 61, 0.78);
+  background: var(--coral);
+  color: white;
+}
+
+.icon-button.danger:hover:not(:disabled) {
+  background: #ad3d2d;
+}
+
+.lifecycle-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: grid;
+  place-items: center;
+  background: rgba(23, 32, 29, 0.46);
+  padding: 18px;
+}
+
+.lifecycle-modal {
+  width: min(560px, 100%);
+  display: grid;
+  gap: 16px;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: var(--paper);
+  box-shadow: var(--shadow-raised);
+  padding: 20px;
+}
+
+.lifecycle-modal.deactivate {
+  border-color: rgba(155, 107, 24, 0.46);
+}
+
+.lifecycle-modal.activate {
+  border-color: rgba(22, 119, 92, 0.46);
+}
+
+.lifecycle-modal.delete {
+  border-color: rgba(201, 79, 61, 0.5);
+}
+
+.lifecycle-modal-heading {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.lifecycle-modal-heading svg {
+  flex: 0 0 auto;
+  color: var(--amber);
+  margin-top: 2px;
+}
+
+.lifecycle-modal.activate .lifecycle-modal-heading svg {
+  color: var(--green);
+}
+
+.lifecycle-modal.delete .lifecycle-modal-heading svg {
+  color: var(--coral);
+}
+
+.lifecycle-modal h2 {
+  margin: 2px 0 0;
+  color: var(--graphite);
+  font-size: 1.24rem;
+  line-height: 1.18;
+}
+
+.lifecycle-modal p {
+  margin: 0;
+  color: var(--muted-strong);
+  line-height: 1.55;
+}
+
+.delete-confirm-field {
+  display: grid;
+  gap: 7px;
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.delete-confirm-field input {
+  min-height: 42px;
+  border: 1px solid rgba(201, 79, 61, 0.38);
+  border-radius: 8px;
+  background: #fffafa;
+  color: var(--ink);
+  padding: 9px 11px;
+}
+
+.lifecycle-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
 }

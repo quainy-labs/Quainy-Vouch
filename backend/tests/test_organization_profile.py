@@ -23,6 +23,7 @@ def test_organization_crud_and_validation():
     )
     created.raise_for_status()
     org = created.json()
+    assert org["status"] == "active"
 
     listed = client.get("/organizations").json()
     assert any(item["id"] == org["id"] for item in listed)
@@ -41,6 +42,51 @@ def test_organization_crud_and_validation():
     assert receipt["organization_id"] == org["id"]
     assert receipt["deleted_by"] == "local_user"
     assert client.get(f"/organizations/{org['id']}").status_code == 404
+
+
+def test_owner_can_deactivate_organization_without_deleting_data():
+    org = client.post("/organizations", json={"name": "Deactivate Org"}).json()
+    deactivated = client.post(f"/organizations/{org['id']}/deactivate").json()
+    listed = client.get("/organizations").json()
+    fetched = client.get(f"/organizations/{org['id']}").json()
+    activated = client.post(f"/organizations/{org['id']}/activate").json()
+    relisted = client.get("/organizations").json()
+
+    assert deactivated["status"] == "deactivated"
+    assert fetched["status"] == "deactivated"
+    assert all(item["id"] != org["id"] for item in listed)
+    assert activated["status"] == "active"
+    assert any(item["id"] == org["id"] for item in relisted)
+
+
+def test_only_owner_can_deactivate_organization():
+    org = client.post("/organizations", json={"name": "Deactivate Permission Org"}).json()
+    viewer = client.post(
+        f"/organizations/{org['id']}/users",
+        json={"name": "Viewer", "email": "deactivate-viewer@example.com", "role": "viewer"},
+    ).json()
+
+    denied = client.post(f"/organizations/{org['id']}/deactivate?actor_id={viewer['id']}")
+    allowed = client.post(f"/organizations/{org['id']}/deactivate")
+
+    assert denied.status_code == 403
+    assert allowed.status_code == 200
+
+
+def test_only_owner_can_activate_organization():
+    org = client.post("/organizations", json={"name": "Activate Permission Org"}).json()
+    viewer = client.post(
+        f"/organizations/{org['id']}/users",
+        json={"name": "Viewer", "email": "activate-viewer@example.com", "role": "viewer"},
+    ).json()
+    client.post(f"/organizations/{org['id']}/deactivate").raise_for_status()
+
+    denied = client.post(f"/organizations/{org['id']}/activate?actor_id={viewer['id']}")
+    allowed = client.post(f"/organizations/{org['id']}/activate")
+
+    assert denied.status_code == 403
+    assert allowed.status_code == 200
+    assert allowed.json()["status"] == "active"
 
 
 def test_only_owner_can_delete_organization_data():

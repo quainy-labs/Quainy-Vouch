@@ -8,6 +8,7 @@ import type {
   ApprovalPolicyForm,
   BackgroundJob,
   LinkedInIntegration,
+  Organization,
   SetupForm,
   SetupSection,
   UserForm,
@@ -37,6 +38,7 @@ type SettingsViewProps = {
   approvalPolicyDraft: ApprovalPolicyForm | null;
   recentJobs: BackgroundJob[];
   failedJobCount: number;
+  organization: Organization;
   onSetupFormChange: (form: SetupForm) => void;
   onSetupSectionChange: (section: SetupSection) => void;
   onLinkedInIntegrationChange: (integration: LinkedInIntegration) => void;
@@ -49,7 +51,10 @@ type SettingsViewProps = {
   onAddUser: () => void | Promise<void>;
   onUpdateUserRole: (userId: string, role: WorkspaceUser["role"]) => void | Promise<void>;
   onSaveApprovalPolicy: () => void | Promise<void>;
+  onActivateOrganization: () => void | Promise<void>;
   onRetryJob: (jobId: string) => void | Promise<void>;
+  onDeactivateOrganization: () => void | Promise<void>;
+  onDeleteOrganization: () => void | Promise<void>;
 };
 
 export function SettingsView({
@@ -72,6 +77,7 @@ export function SettingsView({
   approvalPolicyDraft,
   recentJobs,
   failedJobCount,
+  organization,
   onSetupFormChange,
   onSetupSectionChange,
   onLinkedInIntegrationChange,
@@ -84,10 +90,38 @@ export function SettingsView({
   onAddUser,
   onUpdateUserRole,
   onSaveApprovalPolicy,
+  onActivateOrganization,
   onRetryJob,
+  onDeactivateOrganization,
+  onDeleteOrganization,
 }: SettingsViewProps) {
   const [activeSection, setActiveSection] = useState<"profile" | "publishing" | "ai" | "team" | "approval" | "operations" | "lifecycle">("profile");
+  const [lifecycleDialog, setLifecycleDialog] = useState<"activate" | "deactivate" | "delete" | null>(null);
+  const [deleteConfirmation, setDeleteConfirmation] = useState("");
   const settingsNotice = /workspace|profile|provider|approval|policy|team|user|linkedin|publishing|configuration/i.test(notice) ? notice : "";
+  const organizationName = setupForm?.name.trim() || "this organization";
+  const deleteConfirmationMatches = deleteConfirmation === organizationName;
+
+  function closeLifecycleDialog() {
+    setLifecycleDialog(null);
+    setDeleteConfirmation("");
+  }
+
+  async function confirmDeactivate() {
+    closeLifecycleDialog();
+    await onDeactivateOrganization();
+  }
+
+  async function confirmActivate() {
+    closeLifecycleDialog();
+    await onActivateOrganization();
+  }
+
+  async function confirmDelete() {
+    if (!deleteConfirmationMatches) return;
+    closeLifecycleDialog();
+    await onDeleteOrganization();
+  }
 
   return (
     <section className="section-workspace settings-workspace">
@@ -282,17 +316,45 @@ export function SettingsView({
               <span className="status-pill archived">Owner only</span>
             </div>
             <div className="lifecycle-grid">
-              <article>
-                <strong>Deactivate workspace</strong>
-                <p>Pause generation, publishing, and background jobs while preserving audit history and stored sources.</p>
-                <button className="icon-button" disabled title="Backend lifecycle endpoint is not implemented yet" type="button">
-                  Deactivate
-                </button>
-              </article>
-              <article>
+              {organization.status === "deactivated" ? (
+                <article className="lifecycle-card activate">
+                  <strong>Activate workspace</strong>
+                  <p>Resume generation, publishing, background jobs, and normal workspace activity for this organization.</p>
+                  <button
+                    className="icon-button activate"
+                    disabled={busy || !canManageWorkspace}
+                    onClick={() => setLifecycleDialog("activate")}
+                    title={canManageWorkspace ? "Activate this organization" : workspacePermissionMessage}
+                    type="button"
+                  >
+                    Activate
+                  </button>
+                </article>
+              ) : (
+                <article className="lifecycle-card warning">
+                  <strong>Deactivate workspace</strong>
+                  <p>Pause generation, publishing, and background jobs while preserving audit history and stored sources.</p>
+                  <button
+                    className="icon-button warning"
+                    disabled={busy || !canManageWorkspace}
+                    onClick={() => setLifecycleDialog("deactivate")}
+                    title={canManageWorkspace ? "Deactivate this organization" : workspacePermissionMessage}
+                    type="button"
+                  >
+                    Deactivate
+                  </button>
+                </article>
+              )}
+              <article className="lifecycle-card danger">
                 <strong>Delete organization</strong>
-                <p>Permanent deletion needs a dedicated backend flow with confirmation, export, and audit safeguards.</p>
-                <button className="icon-button" disabled title="Backend deletion endpoint is not implemented yet" type="button">
+                <p>Permanently delete this organization and its local workspace data after name confirmation.</p>
+                <button
+                  className="icon-button danger"
+                  disabled={busy || !canManageWorkspace}
+                  onClick={() => setLifecycleDialog("delete")}
+                  title={canManageWorkspace ? "Delete this organization" : workspacePermissionMessage}
+                  type="button"
+                >
                   Delete
                 </button>
               </article>
@@ -300,6 +362,86 @@ export function SettingsView({
           </section>
         )}
       </div>
+      {lifecycleDialog && (
+        <div className="lifecycle-modal-backdrop" role="presentation">
+          <section
+            aria-labelledby="lifecycle-dialog-title"
+            aria-modal="true"
+            className={`lifecycle-modal ${lifecycleDialog}`}
+            role="dialog"
+          >
+            <div className="lifecycle-modal-heading">
+              <AlertTriangle size={22} />
+              <div>
+                <p className="eyebrow">
+                  {lifecycleDialog === "delete" ? "Permanent deletion" : lifecycleDialog === "activate" ? "Workspace resume" : "Workspace pause"}
+                </p>
+                <h2 id="lifecycle-dialog-title">
+                  {lifecycleDialog === "delete" ? "Delete organization?" : lifecycleDialog === "activate" ? "Activate workspace?" : "Deactivate workspace?"}
+                </h2>
+              </div>
+            </div>
+            {lifecycleDialog === "activate" ? (
+              <>
+                <p>
+                  This will resume generation, publishing, background jobs, and normal workspace activity for <strong>{organizationName}</strong>.
+                </p>
+                <div className="lifecycle-modal-actions">
+                  <button className="icon-button" onClick={closeLifecycleDialog} type="button">
+                    Cancel
+                  </button>
+                  <button className="icon-button activate" disabled={busy} onClick={() => void confirmActivate()} type="button">
+                    Activate workspace
+                  </button>
+                </div>
+              </>
+            ) : lifecycleDialog === "deactivate" ? (
+              <>
+                <p>
+                  This will pause generation, publishing, background jobs, and normal workspace activity for <strong>{organizationName}</strong>.
+                  Existing sources, audit logs, drafts, and settings will be preserved.
+                </p>
+                <div className="lifecycle-modal-actions">
+                  <button className="icon-button" onClick={closeLifecycleDialog} type="button">
+                    Cancel
+                  </button>
+                  <button className="icon-button warning" disabled={busy} onClick={() => void confirmDeactivate()} type="button">
+                    Deactivate workspace
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <p>
+                  This permanently deletes <strong>{organizationName}</strong> and its local workspace data, including sources, opportunities,
+                  briefs, drafts, memory, jobs, model-call logs, users, and audit records.
+                </p>
+                <label className="delete-confirm-field">
+                  <span>Type {organizationName} to confirm</span>
+                  <input
+                    autoFocus
+                    onChange={(event) => setDeleteConfirmation(event.target.value)}
+                    value={deleteConfirmation}
+                  />
+                </label>
+                <div className="lifecycle-modal-actions">
+                  <button className="icon-button" onClick={closeLifecycleDialog} type="button">
+                    Cancel
+                  </button>
+                  <button
+                    className="icon-button danger"
+                    disabled={busy || !deleteConfirmationMatches}
+                    onClick={() => void confirmDelete()}
+                    type="button"
+                  >
+                    Delete organization
+                  </button>
+                </div>
+              </>
+            )}
+          </section>
+        </div>
+      )}
     </section>
   );
 }

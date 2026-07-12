@@ -50,10 +50,12 @@ def test_same_brief_generates_supported_social_posts():
     linkedin = client.post(f"/briefs/{brief['id']}/drafts?platform=linkedin&content_type=company_post").json()["drafts"][0]
     reddit = client.post(f"/briefs/{brief['id']}/drafts?platform=reddit&content_type=post").json()["drafts"][0]
     instagram = client.post(f"/briefs/{brief['id']}/drafts?platform=instagram&content_type=post").json()["drafts"][0]
+    listed_drafts = client.get(f"/briefs/{brief['id']}/drafts").json()
 
     assert linkedin["content_brief_id"] == brief["id"]
     assert reddit["content_brief_id"] == brief["id"]
     assert instagram["content_brief_id"] == brief["id"]
+    assert {draft["id"] for draft in listed_drafts} >= {linkedin["id"], reddit["id"], instagram["id"]}
     assert linkedin["platform"] == "linkedin"
     assert reddit["platform"] == "reddit"
     assert instagram["platform"] == "instagram"

@@ -30,6 +30,7 @@ import type {
   SetupSection,
   SourceForm,
   StrategyDashboard,
+  StudioSection,
   TrendSignal,
   TrendSignalForm,
   UserForm,
@@ -68,6 +69,7 @@ export function useWorkspaceControllerState() {
   const [selectedBrief, setSelectedBrief] = useState<ContentBrief | null>(null);
   const [drafts, setDrafts] = useState<Draft[]>([]);
   const [selectedDraft, setSelectedDraft] = useState<Draft | null>(null);
+  const [studioSectionRequest, setStudioSectionRequest] = useState<{ section: StudioSection; requestedAt: number } | null>(null);
   const [editedBody, setEditedBody] = useState("");
   const [reviewReason, setReviewReason] = useState("");
   const [scheduleFor, setScheduleFor] = useState("");
@@ -153,6 +155,8 @@ export function useWorkspaceControllerState() {
     setDrafts,
     selectedDraft,
     setSelectedDraft,
+    studioSectionRequest,
+    setStudioSectionRequest,
     reviewPackage,
     setReviewPackage,
     editedBody,

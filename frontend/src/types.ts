@@ -12,6 +12,15 @@ export type Organization = {
   description?: string;
   audience_summary?: string;
   default_timezone?: string;
+  status?: "active" | "deactivated";
+};
+
+export type DeletionReceipt = {
+  organization_id: string;
+  deleted_by: string;
+  counts: Record<string, number>;
+  message: string;
+  deleted_at: string;
 };
 
 export type Profile = {
@@ -88,6 +97,7 @@ export type KnowledgeReadiness = {
 
 export type Opportunity = {
   id: string;
+  organization_id: string;
   title: string;
   summary: string;
   reason_today: string;
@@ -132,10 +142,13 @@ export type ApprovalDecision = {
 
 export type Draft = {
   id: string;
+  content_brief_id: string;
+  organization_id: string;
   platform: string;
   content_type: string;
   body: string;
   hook: string;
+  hashtags: string[];
   status: string;
   source_ids: string[];
   source_map: Record<string, string[]>;
@@ -149,6 +162,7 @@ export type Draft = {
   exported_at?: string;
   published_at?: string;
   publish_result: Record<string, unknown>;
+  created_at: string;
   updated_at: string;
 };
 
@@ -219,6 +233,8 @@ export type ContentArtifact = {
   scheduled_for?: string | null;
   published_at?: string | null;
 };
+
+export type StudioSection = "overview" | "opportunities" | "brief" | "drafts" | "review";
 
 export type BackgroundJob = {
   id: string;

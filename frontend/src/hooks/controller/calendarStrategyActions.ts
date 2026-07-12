@@ -69,7 +69,9 @@ export function createCalendarStrategyActions(state: WorkspaceControllerState, o
         `/organizations/${state.bootstrap.organization.id}/trend-opportunities/generate`,
         { method: "POST" },
       );
-      const ranked = sortOpportunities(result.opportunities);
+      const generatedIds = new Set(result.opportunities.map((opportunity) => opportunity.id));
+      const ranked = sortOpportunities([...result.opportunities, ...state.opportunities.filter((opportunity) => !generatedIds.has(opportunity.id))]);
+      const rankedGenerated = sortOpportunities(result.opportunities);
       state.setOpportunities(ranked);
       state.setVisibleOpportunityCount(12);
       state.setOpportunityMessage(
@@ -77,7 +79,7 @@ export function createCalendarStrategyActions(state: WorkspaceControllerState, o
           ? "Trend opportunities generated with warnings for items missing company context."
           : "Trend opportunities generated from calendar and approved company context.",
       );
-      state.setSelectedOpportunity(ranked[0] ?? null);
+      state.setSelectedOpportunity(rankedGenerated[0] ?? ranked[0] ?? null);
       state.setSelectedBrief(null);
       state.setDrafts([]);
       state.setSelectedDraft(null);

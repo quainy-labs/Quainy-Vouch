@@ -8,10 +8,12 @@ import {
   validateAIProviderForm,
   validateSetupForm,
 } from "../../lib/forms";
+import { saveWorkspaceView } from "../../lib/studioSelection";
 import type {
   AIProviderConnectionTest,
   AIProviderSettings,
   ApprovalPolicy,
+  DeletionReceipt,
   LinkedInIntegration,
   OnboardingState,
   Organization,
@@ -29,6 +31,29 @@ type SettingsActionsOptions = {
 };
 
 export function createSettingsActions(state: WorkspaceControllerState, options: SettingsActionsOptions) {
+  function setWorkspaceView(view: "settings" | "sources") {
+    state.setActiveView(view);
+    if (state.bootstrap) {
+      saveWorkspaceView(state.bootstrap.organization.id, view);
+    }
+  }
+
+  function clearWorkspaceAfterLifecycleAction() {
+    state.setCurrentUser(null);
+    state.setOnboarding(null);
+    state.setBootstrap(null);
+    state.setOpportunities([]);
+    state.setSelectedOpportunity(null);
+    state.setSelectedBrief(null);
+    state.setDrafts([]);
+    state.setSelectedDraft(null);
+    state.setContentArtifacts([]);
+    state.setJobs([]);
+    state.setAuthMode("login");
+    state.setAuthRequired(true);
+    state.setActiveView("settings");
+  }
+
   async function skipProfileForNow() {
     if (!state.bootstrap) return;
     state.setBusy(true);
@@ -38,7 +63,7 @@ export function createSettingsActions(state: WorkspaceControllerState, options: 
         body: JSON.stringify({ skip_profile: true }),
       });
       state.setOnboarding(onboarding);
-      state.setActiveView("sources");
+      setWorkspaceView("sources");
       state.setNotice("Profile setup skipped for now. Add an approved source to improve recommendations.");
     } finally {
       state.setBusy(false);
@@ -229,8 +254,56 @@ export function createSettingsActions(state: WorkspaceControllerState, options: 
     }
   }
 
+  async function deactivateOrganization() {
+    if (!state.bootstrap) return;
+    if (!options.requirePermission(options.canManageWorkspace, options.workspacePermissionMessage)) return;
+    state.setBusy(true);
+    try {
+      const organization = await api<Organization>(`/organizations/${state.bootstrap.organization.id}/deactivate`, { method: "POST" });
+      state.setBootstrap((current) => (current ? { ...current, organization } : current));
+      state.setNotice("Organization deactivated.");
+    } catch (error) {
+      state.setNotice(error instanceof Error ? error.message : "Organization deactivation failed.");
+    } finally {
+      state.setBusy(false);
+    }
+  }
+
+  async function activateOrganization() {
+    if (!state.bootstrap) return;
+    if (!options.requirePermission(options.canManageWorkspace, options.workspacePermissionMessage)) return;
+    state.setBusy(true);
+    try {
+      const organization = await api<Organization>(`/organizations/${state.bootstrap.organization.id}/activate`, { method: "POST" });
+      state.setBootstrap((current) => (current ? { ...current, organization } : current));
+      state.setNotice("Organization activated.");
+    } catch (error) {
+      state.setNotice(error instanceof Error ? error.message : "Organization activation failed.");
+    } finally {
+      state.setBusy(false);
+    }
+  }
+
+  async function deleteOrganization() {
+    if (!state.bootstrap) return;
+    if (!options.requirePermission(options.canManageWorkspace, options.workspacePermissionMessage)) return;
+    state.setBusy(true);
+    try {
+      await api<DeletionReceipt>(`/organizations/${state.bootstrap.organization.id}`, { method: "DELETE" });
+      clearWorkspaceAfterLifecycleAction();
+      state.setNotice("Organization deleted.");
+    } catch (error) {
+      state.setNotice(error instanceof Error ? error.message : "Organization deletion failed.");
+    } finally {
+      state.setBusy(false);
+    }
+  }
+
   return {
+    activateOrganization,
     addUser,
+    deactivateOrganization,
+    deleteOrganization,
     refreshUsers,
     saveAIProviderSettings,
     saveApprovalPolicy,

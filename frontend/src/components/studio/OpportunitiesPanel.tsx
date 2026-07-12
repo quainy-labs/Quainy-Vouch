@@ -15,6 +15,7 @@ type OpportunitiesPanelProps = {
   opportunityCount: number;
   onGenerate: () => void | Promise<void>;
   onCreateBrief: (opportunity: Opportunity) => void | Promise<void>;
+  onDismissOpportunity: (opportunity: Opportunity) => void | Promise<void>;
   onShowMore: () => void;
 };
 
@@ -31,9 +32,11 @@ export function OpportunitiesPanel({
   opportunityCount,
   onGenerate,
   onCreateBrief,
+  onDismissOpportunity,
   onShowMore,
 }: OpportunitiesPanelProps) {
   const sourceTitleById = new Map(approvedSources.map((source) => [source.id, source.title]));
+  const rankByOpportunityId = new Map(rankedOpportunities.map((opportunity, index) => [opportunity.id, index + 1]));
   const activeSourceSummary = summarizeNames(approvedSources.map((source) => source.title), 3);
   const sampleSourceActive = approvedSources.some((source) => source.uri?.startsWith("sample://"));
 
@@ -85,16 +88,18 @@ export function OpportunitiesPanel({
       </div>
       <div className="opportunity-grid">
         {visibleOpportunities.length > 0 ? (
-          visibleOpportunities.map((opportunity, index) => (
-            <article
-              className={`opportunity-card ${selectedOpportunity?.id === opportunity.id ? "selected" : ""} ${
-                opportunity.status === "warned" ? "warned" : ""
-              }`}
-              key={opportunity.id}
-            >
+          visibleOpportunities.map((opportunity, index) => {
+            const rank = rankByOpportunityId.get(opportunity.id) ?? index + 1;
+            return (
+              <article
+                className={`opportunity-card ${selectedOpportunity?.id === opportunity.id ? "selected" : ""} ${
+                  opportunity.status === "warned" ? "warned" : ""
+                }`}
+                key={opportunity.id}
+              >
               <h3>{opportunity.title}</h3>
-              <div className="opportunity-scores" aria-label={`Opportunity ${index + 1} ranking signals`}>
-                <span>Opportunity #{index + 1}</span>
+              <div className="opportunity-scores" aria-label={`Opportunity ${rank} ranking signals`}>
+                <span>{selectedOpportunity?.id === opportunity.id ? `Selected / Opportunity #${rank}` : `Opportunity #${rank}`}</span>
                 <span className="score">{Math.round(opportunity.relevance_score * 100)}% relevant</span>
                 <span>{Math.round(opportunity.confidence_score * 100)}% confidence</span>
                 <span>
@@ -117,7 +122,13 @@ export function OpportunitiesPanel({
                   <Plus size={16} />
                   <span>Create brief</span>
                 </button>
-                <button className="icon-button" disabled title="Opportunity feedback is not connected yet" type="button">
+                <button
+                  className="icon-button"
+                  onClick={() => void onDismissOpportunity(opportunity)}
+                  disabled={busy || !canEditContent}
+                  title={canEditContent ? "Mark this opportunity as not relevant" : permissionMessage}
+                  type="button"
+                >
                   Not relevant
                 </button>
               </div>
@@ -128,8 +139,9 @@ export function OpportunitiesPanel({
                   ))}
                 </ul>
               )}
-            </article>
-          ))
+              </article>
+            );
+          })
         ) : (
           <div className="empty-opportunities">
             <Sparkles size={22} />

@@ -36,6 +36,7 @@ type BuildWorkspaceModelInput = {
   libraryStatusFilter: LibraryStatusFilter;
   libraryPlatformFilter: LibraryPlatformFilter;
   opportunities: Opportunity[];
+  selectedOpportunity: Opportunity | null;
   visibleOpportunityCount: number;
 };
 
@@ -71,6 +72,7 @@ export function buildWorkspaceModel({
   libraryStatusFilter,
   libraryPlatformFilter,
   opportunities,
+  selectedOpportunity,
   visibleOpportunityCount,
 }: BuildWorkspaceModelInput) {
   const approvedSourceCount = bootstrap.sources.filter((source) => source.approval_status === "approved").length;
@@ -168,7 +170,13 @@ export function buildWorkspaceModel({
   );
 
   const rankedOpportunities = sortOpportunities(opportunities);
-  const visibleOpportunities = rankedOpportunities.slice(0, visibleOpportunityCount);
+  const baseVisibleOpportunities = rankedOpportunities.slice(0, visibleOpportunityCount);
+  const visibleOpportunities =
+    selectedOpportunity &&
+    selectedOpportunity.status !== "dismissed" &&
+    !baseVisibleOpportunities.some((opportunity) => opportunity.id === selectedOpportunity.id)
+      ? [selectedOpportunity, ...baseVisibleOpportunities.filter((opportunity) => opportunity.id !== selectedOpportunity.id)].slice(0, visibleOpportunityCount)
+      : baseVisibleOpportunities;
   const hiddenOpportunityCount = Math.max(rankedOpportunities.length - visibleOpportunities.length, 0);
   const visibleContentArtifacts = contentArtifacts.filter((artifact) => {
     const statusMatches =
@@ -176,7 +184,8 @@ export function buildWorkspaceModel({
       artifact.kind === libraryStatusFilter ||
       artifact.status === libraryStatusFilter ||
       (libraryStatusFilter === "draft" && artifact.kind === "draft") ||
-      (libraryStatusFilter === "needs_review" && ["needs_review", "pending_approval"].includes(artifact.status));
+      (libraryStatusFilter === "needs_review" && ["needs_review", "pending_approval"].includes(artifact.status)) ||
+      (libraryStatusFilter === "rejected" && ["rejected", "dismissed"].includes(artifact.status));
     const platformMatches = libraryPlatformFilter === "all" || artifact.platform === libraryPlatformFilter;
     return statusMatches && platformMatches;
   });

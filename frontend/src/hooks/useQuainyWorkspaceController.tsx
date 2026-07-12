@@ -4,6 +4,7 @@ import type { AuthScreen } from "../components/auth/AuthScreen";
 import type { LoadingScreen } from "../components/layout/LoadingScreen";
 import type { WorkspaceShell } from "../components/layout/WorkspaceShell";
 import { api } from "../lib/api";
+import { saveStudioSection, saveWorkspaceView } from "../lib/studioSelection";
 import { buildWorkspaceModel } from "../lib/workspaceModel";
 import { createCalendarStrategyActions } from "./controller/calendarStrategyActions";
 import { createCommonActions } from "./controller/commonActions";
@@ -72,6 +73,7 @@ export function useQuainyWorkspaceController(): QuainyWorkspaceController {
     libraryStatusFilter: state.libraryStatusFilter,
     libraryPlatformFilter: state.libraryPlatformFilter,
     opportunities: state.opportunities,
+    selectedOpportunity: state.selectedOpportunity,
     visibleOpportunityCount: state.visibleOpportunityCount,
   });
 
@@ -193,6 +195,7 @@ export function useQuainyWorkspaceController(): QuainyWorkspaceController {
       selectedOpportunity: state.selectedOpportunity,
       opportunityMessage: state.opportunityMessage,
       selectedBrief: state.selectedBrief,
+      studioSectionRequest: state.studioSectionRequest,
       formatChoice: state.formatChoice,
       drafts: state.drafts,
       selectedDraft: state.selectedDraft,
@@ -207,12 +210,23 @@ export function useQuainyWorkspaceController(): QuainyWorkspaceController {
       metricsForm: state.metricsForm,
       preferenceSuggestions: state.preferenceSuggestions,
       onSignOut: commonActions.signOut,
-      onActiveViewChange: state.setActiveView,
+      onActiveViewChange: (view) => {
+        state.setActiveView(view);
+        if (state.bootstrap) {
+          saveWorkspaceView(state.bootstrap.organization.id, view);
+        }
+      },
       onSkipProfile: settingsActions.skipProfileForNow,
       onSelectSource: state.setSelectedSourceId,
       onStatusFilterChange: state.setLibraryStatusFilter,
       onPlatformFilterChange: state.setLibraryPlatformFilter,
-      onSelectDraft: state.setSelectedDraft,
+      onSelectDraft: studioActions.selectDraft,
+      onStudioSectionChange: (section) => {
+        if (state.bootstrap) {
+          saveStudioSection(state.bootstrap.organization.id, section);
+        }
+      },
+      onStudioSectionRequestHandled: () => state.setStudioSectionRequest(null),
       onSetupFormChange: state.setSetupForm,
       onSetupSectionChange: state.setSetupSection,
       onLinkedInIntegrationChange: state.setLinkedinIntegration,
@@ -225,6 +239,9 @@ export function useQuainyWorkspaceController(): QuainyWorkspaceController {
       onAddUser: settingsActions.addUser,
       onUpdateUserRole: settingsActions.updateUserRole,
       onSaveApprovalPolicy: settingsActions.saveApprovalPolicy,
+      onActivateOrganization: settingsActions.activateOrganization,
+      onDeactivateOrganization: settingsActions.deactivateOrganization,
+      onDeleteOrganization: settingsActions.deleteOrganization,
       onRetryJob: retryJob,
       onAddSource: sourceActions.addSource,
       onReadinessAction: sourceActions.handleReadinessAction,
@@ -241,6 +258,8 @@ export function useQuainyWorkspaceController(): QuainyWorkspaceController {
       onGenerateTrendOpportunities: calendarStrategyActions.generateTrendOpportunities,
       onGenerateOpportunities: studioActions.generateOpportunities,
       onCreateBrief: studioActions.createBrief,
+      onDismissOpportunity: studioActions.dismissOpportunity,
+      onOpenLibraryArtifact: studioActions.openLibraryArtifact,
       onShowMoreOpportunities: () => state.setVisibleOpportunityCount((current) => current + 12),
       onSelectContentFormat: studioActions.selectContentFormat,
       onGenerateDraftsFromBrief: studioActions.generateDraftsFromBrief,

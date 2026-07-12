@@ -229,6 +229,18 @@ class PostgresDataStore(DataStore):
         self._persist_organization(org)
         return org
 
+    def deactivate_organization(self, organization_id: str, actor_id: str = "local_user") -> Organization:
+        org = super().deactivate_organization(organization_id, actor_id)
+        self._persist_organization(org)
+        self._persist_audit_logs_for_org(organization_id)
+        return org
+
+    def activate_organization(self, organization_id: str, actor_id: str = "local_user") -> Organization:
+        org = super().activate_organization(organization_id, actor_id)
+        self._persist_organization(org)
+        self._persist_audit_logs_for_org(organization_id)
+        return org
+
     def delete_organization(self, organization_id: str, actor_id: str = "local_user"):
         receipt = super().delete_organization(organization_id, actor_id)
         with self._connect() as connection:
@@ -1011,9 +1023,9 @@ class PostgresDataStore(DataStore):
                 """
                 INSERT INTO organizations (
                     id, name, website_url, industry, description, audience_summary,
-                    default_timezone, created_at, updated_at
+                    default_timezone, status, created_at, updated_at
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (id) DO UPDATE SET
                     name = EXCLUDED.name,
                     website_url = EXCLUDED.website_url,
@@ -1021,6 +1033,7 @@ class PostgresDataStore(DataStore):
                     description = EXCLUDED.description,
                     audience_summary = EXCLUDED.audience_summary,
                     default_timezone = EXCLUDED.default_timezone,
+                    status = EXCLUDED.status,
                     updated_at = EXCLUDED.updated_at
                 """,
                 (
@@ -1031,6 +1044,7 @@ class PostgresDataStore(DataStore):
                     org.description,
                     org.audience_summary,
                     org.default_timezone,
+                    org.status,
                     org.created_at,
                     org.updated_at,
                 ),

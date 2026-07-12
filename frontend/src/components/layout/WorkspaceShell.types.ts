@@ -29,6 +29,7 @@ import type {
   SourceDetail,
   SourceForm,
   StrategyDashboard,
+  StudioSection,
   TrendSignal,
   TrendSignalForm,
   UserForm,
@@ -110,6 +111,7 @@ export type WorkspaceShellProps = {
   selectedOpportunity: Opportunity | null;
   opportunityMessage: string;
   selectedBrief: ContentBrief | null;
+  studioSectionRequest: { section: StudioSection; requestedAt: number } | null;
   formatChoice: FormatChoice;
   drafts: Draft[];
   selectedDraft: Draft | null;
@@ -130,6 +132,8 @@ export type WorkspaceShellProps = {
   onStatusFilterChange: (status: LibraryStatusFilter) => void;
   onPlatformFilterChange: (platform: LibraryPlatformFilter) => void;
   onSelectDraft: (draft: Draft) => void;
+  onStudioSectionChange: (section: StudioSection) => void;
+  onStudioSectionRequestHandled: () => void;
   onSetupFormChange: (form: SetupForm) => void;
   onSetupSectionChange: (section: SetupSection) => void;
   onLinkedInIntegrationChange: (integration: LinkedInIntegration) => void;
@@ -142,6 +146,9 @@ export type WorkspaceShellProps = {
   onAddUser: () => void | Promise<void>;
   onUpdateUserRole: (userId: string, role: WorkspaceUser["role"]) => void | Promise<void>;
   onSaveApprovalPolicy: () => void | Promise<void>;
+  onActivateOrganization: () => void | Promise<void>;
+  onDeactivateOrganization: () => void | Promise<void>;
+  onDeleteOrganization: () => void | Promise<void>;
   onRetryJob: (jobId: string) => void | Promise<void>;
   onAddSource: () => void | Promise<void>;
   onReadinessAction: (action: string) => void | Promise<void>;
@@ -161,6 +168,8 @@ export type WorkspaceShellProps = {
   onGenerateTrendOpportunities: () => void | Promise<void>;
   onGenerateOpportunities: () => void | Promise<void>;
   onCreateBrief: (opportunity: Opportunity) => void | Promise<void>;
+  onDismissOpportunity: (opportunity: Opportunity) => void | Promise<void>;
+  onOpenLibraryArtifact: (artifact: ContentArtifact) => void | Promise<void>;
   onShowMoreOpportunities: () => void;
   onSelectContentFormat: (choice: FormatChoice) => void;
   onGenerateDraftsFromBrief: () => void | Promise<void>;

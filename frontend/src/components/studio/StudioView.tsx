@@ -7,9 +7,10 @@ import type {
   Opportunity,
   ReviewerPackage,
   Source,
+  StudioSection,
 } from "../../types";
 import { FileCheck2, Layers, ListChecks, ShieldCheck, Sparkles } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   contentTypeDisplayName,
   formatChoiceLabel,
@@ -44,6 +45,7 @@ type StudioViewProps = {
   opportunityMessage: string;
   opportunityCount: number;
   selectedBrief: ContentBrief | null;
+  sectionRequest: { section: StudioSection; requestedAt: number } | null;
   formatChoice: FormatChoice;
   drafts: Draft[];
   selectedDraft: Draft | null;
@@ -56,6 +58,9 @@ type StudioViewProps = {
   linkedinIntegration: LinkedInIntegration | null;
   onGenerateOpportunities: () => void | Promise<void>;
   onCreateBrief: (opportunity: Opportunity) => void | Promise<void>;
+  onDismissOpportunity: (opportunity: Opportunity) => void | Promise<void>;
+  onSectionChange: (section: StudioSection) => void;
+  onSectionRequestHandled: () => void;
   onShowMoreOpportunities: () => void;
   onSelectContentFormat: (choice: FormatChoice) => void;
   onGenerateDraftsFromBrief: () => void | Promise<void>;
@@ -92,6 +97,7 @@ export function StudioView({
   opportunityMessage,
   opportunityCount,
   selectedBrief,
+  sectionRequest,
   formatChoice,
   drafts,
   selectedDraft,
@@ -104,6 +110,9 @@ export function StudioView({
   linkedinIntegration,
   onGenerateOpportunities,
   onCreateBrief,
+  onDismissOpportunity,
+  onSectionChange,
+  onSectionRequestHandled,
   onShowMoreOpportunities,
   onSelectContentFormat,
   onGenerateDraftsFromBrief,
@@ -119,7 +128,19 @@ export function StudioView({
   onScheduleForChange,
   onScheduleDraft,
 }: StudioViewProps) {
-  const [activeSection, setActiveSection] = useState<"overview" | "opportunities" | "brief" | "drafts" | "review">("overview");
+  const [activeSection, setActiveSection] = useState<StudioSection>("overview");
+
+  function selectSection(section: StudioSection) {
+    setActiveSection(section);
+    onSectionChange(section);
+  }
+
+  useEffect(() => {
+    if (!sectionRequest) return;
+    selectSection(sectionRequest.section);
+    onSectionRequestHandled();
+  }, [sectionRequest, onSectionRequestHandled]);
+
   const sourceTitleById = new Map(approvedSources.map((source) => [source.id, source.title]));
   const activeSourceSummary = summarizeNames(approvedSources.map((source) => source.title), 3);
   const selectedFormatConfig = formatChoicePlatform(formatChoice);
@@ -271,8 +292,9 @@ export function StudioView({
       onGenerate={onGenerateOpportunities}
       onCreateBrief={async (opportunity) => {
         await onCreateBrief(opportunity);
-        setActiveSection("brief");
+        selectSection("brief");
       }}
+      onDismissOpportunity={onDismissOpportunity}
       onShowMore={onShowMoreOpportunities}
     />
   );
@@ -310,27 +332,27 @@ export function StudioView({
   return (
     <section className="section-workspace studio-workspace">
       <aside className="section-sidebar" aria-label="Studio sections">
-        <button className={activeSection === "overview" ? "active" : ""} onClick={() => setActiveSection("overview")} type="button">
+        <button className={activeSection === "overview" ? "active" : ""} onClick={() => selectSection("overview")} type="button">
           <ListChecks size={16} />
           <span>Overview</span>
           <small>{selectedBrief ? "Brief ready" : "No brief"}</small>
         </button>
-        <button className={activeSection === "opportunities" ? "active" : ""} onClick={() => setActiveSection("opportunities")} type="button">
+        <button className={activeSection === "opportunities" ? "active" : ""} onClick={() => selectSection("opportunities")} type="button">
           <Sparkles size={16} />
           <span>Opportunities</span>
           <small>{rankedOpportunities.length} ranked</small>
         </button>
-        <button className={activeSection === "brief" ? "active" : ""} onClick={() => setActiveSection("brief")} type="button">
+        <button className={activeSection === "brief" ? "active" : ""} onClick={() => selectSection("brief")} type="button">
           <FileCheck2 size={16} />
           <span>Brief</span>
           <small>{selectedBrief ? `Exists (${selectedBriefOpportunityLabel.replace("Opportunity ", "")})` : "Not created"}</small>
         </button>
-        <button className={activeSection === "drafts" ? "active" : ""} onClick={() => setActiveSection("drafts")} type="button">
+        <button className={activeSection === "drafts" ? "active" : ""} onClick={() => selectSection("drafts")} type="button">
           <Layers size={16} />
           <span>Drafts</span>
           <small>{drafts.length} variants</small>
         </button>
-        <button className={activeSection === "review" ? "active" : ""} onClick={() => setActiveSection("review")} type="button">
+        <button className={activeSection === "review" ? "active" : ""} onClick={() => selectSection("review")} type="button">
           <ShieldCheck size={16} />
           <span>Review</span>
           <small>{reviewPackage ? "Ready" : "Waiting"}</small>
@@ -354,7 +376,7 @@ export function StudioView({
               onSelectContentFormat={onSelectContentFormat}
               onGenerateDrafts={async () => {
                 await onGenerateDraftsFromBrief();
-                setActiveSection("drafts");
+                selectSection("drafts");
               }}
             />
           ) : (
@@ -370,7 +392,7 @@ export function StudioView({
                 onSelectDraft={onSelectDraft}
                 onReviewDraft={(draft) => {
                   onSelectDraft(draft);
-                  setActiveSection("review");
+                  selectSection("review");
                 }}
               />
             ) : (

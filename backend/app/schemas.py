@@ -322,6 +322,7 @@ class OrganizationUpdate(BaseModel):
 
 class Organization(OrganizationCreate):
     id: str = Field(default_factory=lambda: new_id("org"))
+    status: str = "active"
     created_at: datetime = Field(default_factory=now_utc)
     updated_at: datetime = Field(default_factory=now_utc)
 

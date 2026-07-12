@@ -1,6 +1,7 @@
 import { api } from "../../lib/api";
 import { emptySourceFormFor, validateSourceForm } from "../../lib/forms";
 import { sourceFormFromFile } from "../../lib/sourceForms";
+import { saveWorkspaceView } from "../../lib/studioSelection";
 import type { Source, SourceDetail, SourceForm } from "../../types";
 import type { WorkspaceControllerState } from "./useWorkspaceControllerState";
 
@@ -14,6 +15,13 @@ type SourceActionsOptions = {
 };
 
 export function createSourceActions(state: WorkspaceControllerState, options: SourceActionsOptions) {
+  function setWorkspaceView(view: "sources" | "settings") {
+    state.setActiveView(view);
+    if (state.bootstrap) {
+      saveWorkspaceView(state.bootstrap.organization.id, view);
+    }
+  }
+
   function clearContentAfterSourceChange(message: string) {
     state.setOpportunities([]);
     state.setVisibleOpportunityCount(12);
@@ -136,15 +144,15 @@ export function createSourceActions(state: WorkspaceControllerState, options: So
 
   async function handleReadinessAction(action: string) {
     if (action === "settings") {
-      state.setActiveView("settings");
+      setWorkspaceView("settings");
       return;
     }
     if (action === "refresh_sources") {
-      state.setActiveView("sources");
+      setWorkspaceView("sources");
       state.setNotice("Select a stale source and refresh it after confirming the source is still current.");
       return;
     }
-    state.setActiveView("sources");
+    setWorkspaceView("sources");
   }
 
   async function handleSourceFile(file: File | undefined) {

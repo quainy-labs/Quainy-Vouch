@@ -23,6 +23,7 @@ from app.schemas import (
     CompanyProfileUpdate,
     ContentArtifact,
     ContentBrief,
+    ContentOpportunity,
     CurrentWorkspace,
     DeletionReceipt,
     Draft,
@@ -323,6 +324,40 @@ def update_organization(
     try:
         actor_id = require_org_role(organization_id, authorization, {UserRole.owner}, actor_id)
         return store.update_organization(organization_id, payload, actor_id)
+    except AuthenticationError as error:
+        raise authentication_failed(error) from error
+    except PermissionDeniedError as error:
+        raise permission_denied(error) from error
+    except NotFoundError as error:
+        raise not_found(error) from error
+
+
+@app.post("/organizations/{organization_id}/deactivate", response_model=Organization)
+def deactivate_organization(
+    organization_id: str,
+    actor_id: str = "local_user",
+    authorization: str | None = Header(default=None),
+) -> Organization:
+    try:
+        actor_id = require_org_role(organization_id, authorization, {UserRole.owner}, actor_id)
+        return store.deactivate_organization(organization_id, actor_id)
+    except AuthenticationError as error:
+        raise authentication_failed(error) from error
+    except PermissionDeniedError as error:
+        raise permission_denied(error) from error
+    except NotFoundError as error:
+        raise not_found(error) from error
+
+
+@app.post("/organizations/{organization_id}/activate", response_model=Organization)
+def activate_organization(
+    organization_id: str,
+    actor_id: str = "local_user",
+    authorization: str | None = Header(default=None),
+) -> Organization:
+    try:
+        actor_id = require_org_role(organization_id, authorization, {UserRole.owner}, actor_id)
+        return store.activate_organization(organization_id, actor_id)
     except AuthenticationError as error:
         raise authentication_failed(error) from error
     except PermissionDeniedError as error:
@@ -758,6 +793,24 @@ def list_opportunities(
         raise not_found(error) from error
 
 
+@app.post("/opportunities/{opportunity_id}/dismiss", response_model=ContentOpportunity)
+def dismiss_opportunity(
+    opportunity_id: str,
+    payload: ReviewDecisionCreate,
+    authorization: str | None = Header(default=None),
+) -> ContentOpportunity:
+    try:
+        opportunity = store.get_opportunity(opportunity_id)
+        actor_id = require_org_role(opportunity.organization_id, authorization, {UserRole.owner, UserRole.editor}, "local_user")
+        return store.dismiss_opportunity(opportunity_id, payload, actor_id)
+    except AuthenticationError as error:
+        raise authentication_failed(error) from error
+    except PermissionDeniedError as error:
+        raise permission_denied(error) from error
+    except NotFoundError as error:
+        raise not_found(error) from error
+
+
 @app.get("/organizations/{organization_id}/calendar-events", response_model=list[CalendarEvent])
 def list_calendar_events(
     organization_id: str,
@@ -868,6 +921,21 @@ def create_brief(
         raise not_found(error) from error
 
 
+@app.get("/opportunities/{opportunity_id}", response_model=ContentOpportunity)
+def get_opportunity(
+    opportunity_id: str,
+    authorization: str | None = Header(default=None),
+) -> ContentOpportunity:
+    try:
+        opportunity = store.get_opportunity(opportunity_id)
+        actor_from_optional_auth(opportunity.organization_id, authorization)
+        return opportunity
+    except AuthenticationError as error:
+        raise authentication_failed(error) from error
+    except NotFoundError as error:
+        raise not_found(error) from error
+
+
 @app.get("/briefs/{brief_id}", response_model=ContentBrief)
 def get_brief(
     brief_id: str,
@@ -877,6 +945,21 @@ def get_brief(
         brief = store.get_brief(brief_id)
         actor_from_optional_auth(brief.organization_id, authorization)
         return brief
+    except AuthenticationError as error:
+        raise authentication_failed(error) from error
+    except NotFoundError as error:
+        raise not_found(error) from error
+
+
+@app.get("/briefs/{brief_id}/drafts", response_model=list[Draft])
+def list_brief_drafts(
+    brief_id: str,
+    authorization: str | None = Header(default=None),
+) -> list[Draft]:
+    try:
+        brief = store.get_brief(brief_id)
+        actor_from_optional_auth(brief.organization_id, authorization)
+        return store.list_drafts_for_brief(brief_id)
     except AuthenticationError as error:
         raise authentication_failed(error) from error
     except NotFoundError as error:

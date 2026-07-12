@@ -23,6 +23,7 @@ CREATE TABLE IF NOT EXISTS organizations (
     description TEXT,
     audience_summary TEXT,
     default_timezone TEXT NOT NULL DEFAULT 'UTC',
+    status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'deactivated')),
     created_at TIMESTAMPTZ NOT NULL,
     updated_at TIMESTAMPTZ NOT NULL
 );

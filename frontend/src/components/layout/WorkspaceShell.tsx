@@ -73,6 +73,7 @@ export function WorkspaceShell({
   selectedOpportunity,
   opportunityMessage,
   selectedBrief,
+  studioSectionRequest,
   formatChoice,
   drafts,
   selectedDraft,
@@ -93,6 +94,8 @@ export function WorkspaceShell({
   onStatusFilterChange,
   onPlatformFilterChange,
   onSelectDraft,
+  onStudioSectionChange,
+  onStudioSectionRequestHandled,
   onSetupFormChange,
   onSetupSectionChange,
   onLinkedInIntegrationChange,
@@ -105,6 +108,9 @@ export function WorkspaceShell({
   onAddUser,
   onUpdateUserRole,
   onSaveApprovalPolicy,
+  onActivateOrganization,
+  onDeactivateOrganization,
+  onDeleteOrganization,
   onRetryJob,
   onAddSource,
   onReadinessAction,
@@ -121,6 +127,8 @@ export function WorkspaceShell({
   onGenerateTrendOpportunities,
   onGenerateOpportunities,
   onCreateBrief,
+  onDismissOpportunity,
+  onOpenLibraryArtifact,
   onShowMoreOpportunities,
   onSelectContentFormat,
   onGenerateDraftsFromBrief,
@@ -174,15 +182,11 @@ export function WorkspaceShell({
               platformFilter={libraryPlatformFilter}
               availablePlatforms={availableLibraryPlatforms}
               artifacts={visibleContentArtifacts}
-              drafts={drafts}
               hasVisibleArtifacts={hasVisibleLibraryArtifacts}
               onStatusFilterChange={onStatusFilterChange}
               onPlatformFilterChange={onPlatformFilterChange}
               onOpenStudio={() => onActiveViewChange("studio")}
-              onOpenDraft={(draft) => {
-                onSelectDraft(draft);
-                onActiveViewChange("studio");
-              }}
+              onOpenArtifact={onOpenLibraryArtifact}
             />
           )}
 
@@ -207,6 +211,7 @@ export function WorkspaceShell({
               approvalPolicyDraft={approvalPolicyDraft}
               recentJobs={recentJobs}
               failedJobCount={failedJobCount}
+              organization={bootstrap.organization}
               onSetupFormChange={onSetupFormChange}
               onSetupSectionChange={onSetupSectionChange}
               onLinkedInIntegrationChange={onLinkedInIntegrationChange}
@@ -219,6 +224,9 @@ export function WorkspaceShell({
               onAddUser={onAddUser}
               onUpdateUserRole={onUpdateUserRole}
               onSaveApprovalPolicy={onSaveApprovalPolicy}
+              onActivateOrganization={onActivateOrganization}
+              onDeactivateOrganization={onDeactivateOrganization}
+              onDeleteOrganization={onDeleteOrganization}
               onRetryJob={onRetryJob}
             />
           )}
@@ -291,6 +299,7 @@ export function WorkspaceShell({
               opportunityMessage={opportunityMessage}
               opportunityCount={rankedOpportunities.length}
               selectedBrief={selectedBrief}
+              sectionRequest={studioSectionRequest}
               formatChoice={formatChoice}
               drafts={drafts}
               selectedDraft={selectedDraft}
@@ -303,6 +312,9 @@ export function WorkspaceShell({
               linkedinIntegration={linkedinIntegration}
               onGenerateOpportunities={onGenerateOpportunities}
               onCreateBrief={onCreateBrief}
+              onDismissOpportunity={onDismissOpportunity}
+              onSectionChange={onStudioSectionChange}
+              onSectionRequestHandled={onStudioSectionRequestHandled}
               onShowMoreOpportunities={onShowMoreOpportunities}
               onSelectContentFormat={onSelectContentFormat}
               onGenerateDraftsFromBrief={onGenerateDraftsFromBrief}
