@@ -1,5 +1,9 @@
 # Quainy Vouch
 
+[![Python 3.12+](https://img.shields.io/badge/Python-3.12%2B-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
+[![License](https://img.shields.io/github/license/quainy-labs/Quainy-Vouch?style=for-the-badge)](./LICENSE)
+
+
 Quainy Vouch is a source-grounded content workspace for teams that need public communication to stay accurate, reviewable, and tied to approved company knowledge.
 
 It helps a team move from trusted sources to opportunities, briefs, drafts, review, scheduling, and learning signals. It is not an autonomous publisher and it is not a broad internal crawler.
@@ -8,18 +12,11 @@ It helps a team move from trusted sources to opportunities, briefs, drafts, revi
 
 - Collects approved sources, profile details, voice rules, claims, and content pillars.
 - Turns source-backed context into timely content opportunities.
-- Generates briefs and draft variants for channels such as LinkedIn, blog, newsletter, and Instagram.
+- Generates briefs and draft variants for channels such as LinkedIn, Reddit, and Instagram.
 - Keeps humans in the approval loop before export, schedule, or publish-like actions.
 - Tracks review decisions, rejected ideas, manual performance, and content memory.
 - Supports organization users, roles, approval policy, calendar signals, trends, and strategy views.
 
-
-## Tech Stack
-
-- Backend: FastAPI, Pydantic, Alembic, PostgreSQL/pgvector support.
-- Frontend: Vite, React, TypeScript, CSS modules/stylesheets.
-- Local defaults: deterministic model behavior and local hash embeddings.
-- Optional providers: OpenAI-compatible client support through the `providers` extra.
 
 ## Quickstart
 
@@ -93,8 +90,6 @@ docker compose up --build
 ## Important Environment Flags
 
 - `QUAINY_DATA_BACKEND=postgres` enables PostgreSQL-backed persistence.
-- `QUAINY_FIXTURE_MODE=none` keeps seeded sample data off.
-- `QUAINY_FIXTURE_MODE=sample` enables local sample fixtures for development.
 - `QUAINY_MODEL_PROVIDER=deterministic` uses deterministic generation.
 - `QUAINY_EMBEDDING_PROVIDER=local_hash` uses local hash embeddings.
 - `QUAINY_LINKEDIN_PUBLISHING_PROVIDER=local` uses the credential-free local publishing adapter.
@@ -109,6 +104,13 @@ See `.env.example` for the full local configuration.
 - Trends must connect to approved company context before becoming usable content.
 - Development fixtures are not production onboarding.
 - Raw secrets should stay in backend environment variables, not in UI payloads.
+
+## Tech Stack
+
+- Backend: FastAPI, Pydantic, Alembic, PostgreSQL/pgvector support.
+- Frontend: Vite, React, TypeScript, CSS modules/stylesheets.
+- Local defaults: deterministic model behavior and local hash embeddings.
+- Optional providers: OpenAI-compatible client support through the `providers` extra.
 
 ## Documentation
 
