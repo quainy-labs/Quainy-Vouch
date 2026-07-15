@@ -99,6 +99,13 @@
   line-height: 1.38;
 }
 
+.reddit-community-fields {
+  display: grid;
+  grid-template-columns: minmax(240px, 520px);
+  gap: 12px;
+  margin: 14px 0 18px;
+}
+
 .brief-list h3 {
   margin: 0 0 10px;
 }

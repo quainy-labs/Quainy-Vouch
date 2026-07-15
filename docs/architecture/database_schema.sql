@@ -76,7 +76,7 @@ CREATE TABLE IF NOT EXISTS approval_policies (
 CREATE TABLE IF NOT EXISTS ai_provider_settings (
     organization_id TEXT PRIMARY KEY REFERENCES organizations(id) ON DELETE CASCADE,
     generation_provider TEXT NOT NULL DEFAULT 'deterministic'
-        CHECK (generation_provider IN ('deterministic', 'openai', 'openai_compatible', 'local')),
+        CHECK (generation_provider IN ('deterministic', 'openai', 'gemini', 'openai_compatible', 'local')),
     generation_model TEXT NOT NULL DEFAULT 'deterministic-structured-v1',
     generation_base_url TEXT,
     generation_api_key_env_var TEXT,
@@ -354,6 +354,25 @@ CREATE TABLE IF NOT EXISTS linkedin_integrations (
     permissions JSONB NOT NULL DEFAULT '[]',
     publishing_enabled BOOLEAN NOT NULL DEFAULT FALSE,
     updated_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS publishing_connections (
+    organization_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    provider TEXT NOT NULL CHECK (provider IN ('linkedin', 'reddit', 'instagram')),
+    oauth_status TEXT NOT NULL DEFAULT 'not_connected',
+    scopes JSONB NOT NULL DEFAULT '[]',
+    access_token TEXT,
+    refresh_token TEXT,
+    token_type TEXT,
+    expires_at TIMESTAMPTZ,
+    account_id TEXT,
+    account_name TEXT,
+    selected_target_id TEXT,
+    selected_target_name TEXT,
+    selected_target_type TEXT,
+    publishing_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+    updated_at TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY (organization_id, provider)
 );
 
 CREATE TABLE IF NOT EXISTS publish_results (

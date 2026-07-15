@@ -7,7 +7,15 @@ import urllib.error
 import urllib.request
 
 
-API_BASE = os.getenv("QUAINY_API_BASE", "http://127.0.0.1:8000").rstrip("/")
+def env_value(name: str, legacy_name: str, default: str | None = None) -> str | None:
+    return os.getenv(name) or os.getenv(legacy_name) or default
+
+
+def env_enabled(name: str, legacy_name: str) -> bool:
+    return (env_value(name, legacy_name, "0") or "0").lower() in {"1", "true", "yes"}
+
+
+API_BASE = (env_value("VOUCH_API_BASE", "QUAINY_API_BASE", "http://127.0.0.1:8000") or "http://127.0.0.1:8000").rstrip("/")
 
 
 def request(method: str, path: str, payload: dict | None = None, token: str | None = None) -> dict:
@@ -26,9 +34,9 @@ def request(method: str, path: str, payload: dict | None = None, token: str | No
 
 def main() -> None:
     suffix = int(time.time())
-    existing_email = os.getenv("QUAINY_SMOKE_EMAIL")
-    password = os.getenv("QUAINY_SMOKE_PASSWORD", "docker-smoke-pass")
-    existing_token = os.getenv("QUAINY_SMOKE_TOKEN")
+    existing_email = env_value("VOUCH_SMOKE_EMAIL", "QUAINY_SMOKE_EMAIL")
+    password = env_value("VOUCH_SMOKE_PASSWORD", "QUAINY_SMOKE_PASSWORD", "docker-smoke-pass")
+    existing_token = env_value("VOUCH_SMOKE_TOKEN", "QUAINY_SMOKE_TOKEN")
     if existing_token:
         token = existing_token
         workspace = request("GET", "/me", token=token)
@@ -70,8 +78,8 @@ def main() -> None:
         )
         source_id = source["id"]
     artifact_summary = None
-    read_artifacts = os.getenv("QUAINY_SMOKE_READ_ARTIFACTS", "0").lower() in {"1", "true", "yes"}
-    if os.getenv("QUAINY_SMOKE_ARTIFACTS", "0").lower() in {"1", "true", "yes"}:
+    read_artifacts = env_enabled("VOUCH_SMOKE_READ_ARTIFACTS", "QUAINY_SMOKE_READ_ARTIFACTS")
+    if env_enabled("VOUCH_SMOKE_ARTIFACTS", "QUAINY_SMOKE_ARTIFACTS"):
         opportunities = request("POST", f"/organizations/{org_id}/opportunities/generate", token=token)["opportunities"]
         if not opportunities:
             raise RuntimeError("Artifact smoke could not generate an opportunity from approved context.")
@@ -102,7 +110,7 @@ def main() -> None:
         "source_count": len(workspace["sources"]),
         "onboarding_steps": workspace["onboarding"]["completed_steps"],
     }
-    if os.getenv("QUAINY_SMOKE_PRINT_TOKEN", "0").lower() in {"1", "true", "yes"}:
+    if env_enabled("VOUCH_SMOKE_PRINT_TOKEN", "QUAINY_SMOKE_PRINT_TOKEN"):
         result["token"] = token
     if artifact_summary:
         result["artifacts"] = artifact_summary

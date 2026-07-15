@@ -11,8 +11,8 @@ def auth_header(token: str) -> dict[str, str]:
 
 
 def test_fixture_mode_blocks_deterministic_seed_in_production(monkeypatch):
-    monkeypatch.setenv("QUAINY_ENV", "production")
-    monkeypatch.setenv("QUAINY_ENABLE_DEV_SEED", "true")
+    monkeypatch.setenv("VOUCH_ENV", "production")
+    monkeypatch.setenv("VOUCH_ENABLE_DEV_SEED", "true")
 
     try:
         fixture_mode()
@@ -23,6 +23,10 @@ def test_fixture_mode_blocks_deterministic_seed_in_production(monkeypatch):
 
 
 def test_fixture_mode_keeps_test_memory_seed_available(monkeypatch):
+    monkeypatch.delenv("VOUCH_ENV", raising=False)
+    monkeypatch.delenv("VOUCH_DATA_BACKEND", raising=False)
+    monkeypatch.delenv("VOUCH_ENABLE_DEV_SEED", raising=False)
+    monkeypatch.delenv("VOUCH_FIXTURE_MODE", raising=False)
     monkeypatch.delenv("QUAINY_ENV", raising=False)
     monkeypatch.delenv("QUAINY_DATA_BACKEND", raising=False)
     monkeypatch.delenv("QUAINY_ENABLE_DEV_SEED", raising=False)

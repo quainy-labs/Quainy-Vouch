@@ -43,6 +43,7 @@ export function WorkspaceShell({
   setupErrors,
   setupSection,
   linkedinIntegration,
+  publishingConnections,
   aiProviderSettings,
   aiProviderDraft,
   aiProviderTest,
@@ -74,6 +75,7 @@ export function WorkspaceShell({
   opportunityMessage,
   selectedBrief,
   studioSectionRequest,
+  redditCommunity,
   formatChoice,
   drafts,
   selectedDraft,
@@ -131,6 +133,7 @@ export function WorkspaceShell({
   onOpenLibraryArtifact,
   onShowMoreOpportunities,
   onSelectContentFormat,
+  onRedditCommunityChange,
   onGenerateDraftsFromBrief,
   onEditedBodyChange,
   onReviewReasonChange,
@@ -202,6 +205,7 @@ export function WorkspaceShell({
               setupErrors={setupErrors}
               setupSection={setupSection}
               linkedinIntegration={linkedinIntegration}
+              publishingConnections={publishingConnections}
               aiProviderSettings={aiProviderSettings}
               aiProviderDraft={aiProviderDraft}
               aiProviderTest={aiProviderTest}
@@ -300,6 +304,7 @@ export function WorkspaceShell({
               opportunityCount={rankedOpportunities.length}
               selectedBrief={selectedBrief}
               sectionRequest={studioSectionRequest}
+              redditCommunity={redditCommunity}
               formatChoice={formatChoice}
               drafts={drafts}
               selectedDraft={selectedDraft}
@@ -317,6 +322,7 @@ export function WorkspaceShell({
               onSectionRequestHandled={onStudioSectionRequestHandled}
               onShowMoreOpportunities={onShowMoreOpportunities}
               onSelectContentFormat={onSelectContentFormat}
+              onRedditCommunityChange={onRedditCommunityChange}
               onGenerateDraftsFromBrief={onGenerateDraftsFromBrief}
               onSelectDraft={onSelectDraft}
               onEditedBodyChange={onEditedBodyChange}

@@ -1,6 +1,8 @@
 import type {
   AIProviderSettings,
   AIProviderSettingsForm,
+  AICloudService,
+  AIProviderKind,
   ApprovalPolicy,
   ApprovalPolicyForm,
   AuthForm,
@@ -136,13 +138,20 @@ export function formatAuditTime(value: string): string {
   }).format(new Date(parsed));
 }
 
-export function formatChoiceParams(choice: FormatChoice): string {
+type FormatChoiceParamOptions = {
+  redditCommunity?: string;
+};
+
+export function formatChoiceParams(choice: FormatChoice, options: FormatChoiceParamOptions = {}): string {
   const params: Record<FormatChoice, string> = {
     linkedin_post: "?platform=linkedin&content_type=company_post",
     reddit_post: "?platform=reddit&content_type=post",
     instagram_post: "?platform=instagram&content_type=post",
   };
-  return params[choice];
+  if (choice !== "reddit_post") return params[choice];
+  const redditParams = new URLSearchParams(params.reddit_post.slice(1));
+  if (options.redditCommunity?.trim()) redditParams.set("reddit_community", options.redditCommunity.trim());
+  return `?${redditParams.toString()}`;
 }
 
 export function formatChoiceNotice(choice: FormatChoice): string {
@@ -315,30 +324,50 @@ export function approvalPolicyForm(policy: ApprovalPolicy): ApprovalPolicyForm {
 
 export function aiProviderSettingsForm(settings: AIProviderSettings): AIProviderSettingsForm {
   return {
-    generation_provider: settings.generation_provider,
+    generation_provider: normalizeAIProviderKind(settings.generation_provider),
+    generation_cloud_service: inferAICloudService(settings.generation_base_url, settings.generation_api_key_env_var),
     generation_model: settings.generation_model || "deterministic-structured-v1",
     generation_base_url: settings.generation_base_url ?? "",
     generation_api_key_env_var: settings.generation_api_key_env_var ?? "",
-    embedding_provider: settings.embedding_provider,
+    generation_local_runtime: settings.generation_local_runtime ?? "none",
+    embedding_provider: normalizeAIProviderKind(settings.embedding_provider),
+    embedding_cloud_service: inferAICloudService(settings.embedding_base_url, settings.embedding_api_key_env_var),
     embedding_model: settings.embedding_model || "local-hash",
     embedding_base_url: settings.embedding_base_url ?? "",
     embedding_api_key_env_var: settings.embedding_api_key_env_var ?? "",
-    local_runtime: settings.local_runtime,
+    embedding_local_runtime: settings.embedding_local_runtime ?? "none",
     enabled: settings.enabled,
   };
 }
 
+function normalizeAIProviderKind(provider: AIProviderKind): AIProviderKind {
+  return provider === "openai" ? "openai_compatible" : provider;
+}
+
+function inferAICloudService(baseUrl: string | null | undefined, secretReference: string | null | undefined): AICloudService {
+  const value = `${baseUrl ?? ""} ${secretReference ?? ""}`.toLowerCase();
+  if (value.includes("api.x.ai") || value.includes("xai") || value.includes("grok")) return "grok";
+  if (value.includes("anthropic") || value.includes("claude")) return "claude";
+  if (value.includes("google") || value.includes("gemini") || value.includes("generativelanguage")) return "gemini";
+  if (value.includes("openai") || value.includes("chatgpt")) return "openai";
+  return "other";
+}
+
 export function aiProviderPayload(form: AIProviderSettingsForm) {
+  const generationProvider = normalizeAIProviderKind(form.generation_provider);
+  const embeddingProvider = normalizeAIProviderKind(form.embedding_provider);
+  const generationUsesBaseUrl = !["deterministic", "gemini"].includes(generationProvider);
   return {
-    generation_provider: form.generation_provider,
+    generation_provider: generationProvider,
     generation_model: form.generation_model.trim() || "deterministic-structured-v1",
-    generation_base_url: form.generation_base_url.trim() || null,
-    generation_api_key_env_var: form.generation_api_key_env_var.trim() || null,
-    embedding_provider: form.embedding_provider,
+    generation_base_url: generationUsesBaseUrl ? form.generation_base_url.trim() || null : null,
+    generation_api_key_env_var: generationProvider === "deterministic" ? null : form.generation_api_key_env_var.trim() || null,
+    generation_local_runtime: generationProvider === "local" ? form.generation_local_runtime : "none",
+    embedding_provider: embeddingProvider,
     embedding_model: form.embedding_model.trim() || "local-hash",
-    embedding_base_url: form.embedding_base_url.trim() || null,
-    embedding_api_key_env_var: form.embedding_api_key_env_var.trim() || null,
-    local_runtime: form.local_runtime,
+    embedding_base_url: embeddingProvider === "deterministic" ? null : form.embedding_base_url.trim() || null,
+    embedding_api_key_env_var: embeddingProvider === "deterministic" ? null : form.embedding_api_key_env_var.trim() || null,
+    embedding_local_runtime: embeddingProvider === "local" ? form.embedding_local_runtime : "none",
     enabled: form.enabled,
   };
 }
@@ -348,10 +377,10 @@ export function validateAIProviderForm(form: AIProviderSettingsForm): string[] {
   if (!form.generation_model.trim()) errors.push("Generation model is required.");
   if (!form.embedding_model.trim()) errors.push("Embedding model is required.");
   if (["openai_compatible", "local"].includes(form.generation_provider) && !form.generation_base_url.trim()) {
-    errors.push("Generation base URL is required for local or OpenAI-compatible providers.");
+    errors.push("Generation base URL is required for local runtime or cloud LLM providers.");
   }
   if (["openai_compatible", "local"].includes(form.embedding_provider) && !form.embedding_base_url.trim()) {
-    errors.push("Embedding base URL is required for local or OpenAI-compatible providers.");
+    errors.push("Embedding base URL is required for local runtime or cloud LLM providers.");
   }
   const secretPattern = /^[A-Za-z0-9_-]*$/;
   if (!secretPattern.test(form.generation_api_key_env_var) || !secretPattern.test(form.embedding_api_key_env_var)) {

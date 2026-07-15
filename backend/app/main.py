@@ -1,11 +1,18 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
+import base64
 import os
+import secrets
+from datetime import timedelta
+from urllib.parse import urlencode, urlparse
+from urllib.request import Request, urlopen
 
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import FastAPI, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import RedirectResponse
 
 from app.schemas import (
     AIProviderConnectionTest,
@@ -47,6 +54,10 @@ from app.schemas import (
     PostMemory,
     PreferenceSuggestion,
     PreferenceSuggestionDecision,
+    PublishingConnection,
+    PublishingOAuthStart,
+    PublishingOAuthCallback,
+    PublishingProvider,
     PublishResult,
     ReviewDecisionCreate,
     ReviewerPackage,
@@ -64,6 +75,7 @@ from app.schemas import (
     UserCreate,
     UserRole,
     UserUpdate,
+    now_utc,
 )
 from app.risk_checks import high_risk_unsupported_claims
 from app.store import (
@@ -74,19 +86,24 @@ from app.store import (
     PermissionDeniedError,
     ReviewDecisionRequiredError,
 )
+from app.providers import resolve_secret_reference
 
 
 ROOT = Path(__file__).resolve().parents[2]
 
 
+def env_value(name: str, legacy_name: str | None = None, default: str | None = None) -> str | None:
+    return resolve_secret_reference(name) or (resolve_secret_reference(legacy_name) if legacy_name else None) or default
+
+
 def build_store() -> DataStore:
-    data_backend = os.getenv("QUAINY_DATA_BACKEND", "memory").strip().lower()
+    data_backend = env_value("VOUCH_DATA_BACKEND", "QUAINY_DATA_BACKEND", "memory").strip().lower()
     if data_backend == "postgres":
         from app.postgres_store import PostgresDataStore
 
-        database_url = os.getenv("DATABASE_URL")
+        database_url = resolve_secret_reference("DATABASE_URL")
         if not database_url:
-            raise RuntimeError("DATABASE_URL is required when QUAINY_DATA_BACKEND=postgres.")
+            raise RuntimeError("DATABASE_URL is required when VOUCH_DATA_BACKEND=postgres.")
         return PostgresDataStore(database_url, ROOT / "docs" / "architecture" / "database_schema.sql")
     return DataStore()
 
@@ -99,14 +116,14 @@ def enabled(value: str | None) -> bool:
 
 
 def fixture_mode() -> str:
-    environment = os.getenv("QUAINY_ENV", "development").strip().lower()
-    data_backend = os.getenv("QUAINY_DATA_BACKEND", "memory").strip().lower()
-    explicit_mode = os.getenv("QUAINY_FIXTURE_MODE")
-    explicit_seed = os.getenv("QUAINY_ENABLE_DEV_SEED")
+    environment = env_value("VOUCH_ENV", "QUAINY_ENV", "development").strip().lower()
+    data_backend = env_value("VOUCH_DATA_BACKEND", "QUAINY_DATA_BACKEND", "memory").strip().lower()
+    explicit_mode = env_value("VOUCH_FIXTURE_MODE", "QUAINY_FIXTURE_MODE")
+    explicit_seed = env_value("VOUCH_ENABLE_DEV_SEED", "QUAINY_ENABLE_DEV_SEED")
 
     if environment == "production":
         if enabled(explicit_seed) or (explicit_mode and explicit_mode.strip().lower() != "none"):
-            raise RuntimeError("Deterministic fixtures cannot be enabled when QUAINY_ENV=production.")
+            raise RuntimeError("Deterministic fixtures cannot be enabled when VOUCH_ENV=production.")
         return "none"
     if explicit_mode:
         return explicit_mode.strip().lower()
@@ -153,6 +170,20 @@ def authentication_failed(error: AuthenticationError) -> HTTPException:
     return HTTPException(status_code=401, detail=str(error))
 
 
+def generation_failed(error: RuntimeError) -> HTTPException:
+    message = str(error)
+    provider_failure_markers = (
+        "provider request failed",
+        "runtime availability",
+        "request timed out",
+        "quota",
+        "RESOURCE_EXHAUSTED",
+        "UNAVAILABLE",
+    )
+    status_code = 502 if any(marker.lower() in message.lower() for marker in provider_failure_markers) else 422
+    return HTTPException(status_code=status_code, detail=message)
+
+
 def bearer_token(authorization: str | None) -> str | None:
     if not authorization:
         return None
@@ -197,6 +228,352 @@ def require_org_role(
     actor_id = actor_from_auth(organization_id, authorization, fallback_actor_id)
     store.require_role(organization_id, actor_id, allowed_roles)
     return actor_id
+
+
+def build_publishing_oauth_start(organization_id: str, provider: str, frontend_origin: str | None = None) -> PublishingOAuthStart:
+    provider_key, config = publishing_oauth_config(provider)
+    client_id = first_env(config["client_id_env"])
+    redirect_uri = first_env(config["redirect_uri_env"])
+    if not client_id or not redirect_uri:
+        raise HTTPException(status_code=400, detail=f"{provider_key.title()} OAuth is not configured.")
+
+    params = {
+        "response_type": "code",
+        "client_id": client_id,
+        "redirect_uri": redirect_uri,
+        "scope": scope_value_from_config(config["scope_env"], str(config["default_scope"])),
+        "state": publishing_oauth_state(organization_id, provider_key, frontend_origin),
+    }
+    return PublishingOAuthStart(
+        provider=provider_key,
+        authorization_url=f"{config['authorize_url']}?{urlencode(params)}",
+    )
+
+
+def publishing_oauth_config(provider: str) -> tuple[str, dict[str, object]]:
+    provider_key = provider.strip().lower()
+    configs: dict[str, dict[str, object]] = {
+        "linkedin": {
+            "authorize_url": "https://www.linkedin.com/oauth/v2/authorization",
+            "token_url": "https://www.linkedin.com/oauth/v2/accessToken",
+            "client_id_env": ("LINKEDIN_CLIENT_ID", "QUAINY_LINKEDIN_CLIENT_ID"),
+            "client_secret_env": ("LINKEDIN_CLIENT_SECRET", "QUAINY_LINKEDIN_CLIENT_SECRET"),
+            "redirect_uri_env": ("LINKEDIN_REDIRECT_URI", "QUAINY_LINKEDIN_REDIRECT_URI"),
+            "scope_env": ("LINKEDIN_SCOPES", "QUAINY_LINKEDIN_SCOPES"),
+            "default_scope": "openid profile w_member_social r_organization_social w_organization_social",
+            "default_target_type": "company_page",
+        },
+        "reddit": {
+            "authorize_url": "https://www.reddit.com/api/v1/authorize",
+            "token_url": "https://www.reddit.com/api/v1/access_token",
+            "client_id_env": ("REDDIT_CLIENT_ID", "QUAINY_REDDIT_CLIENT_ID"),
+            "client_secret_env": ("REDDIT_CLIENT_SECRET", "QUAINY_REDDIT_CLIENT_SECRET"),
+            "redirect_uri_env": ("REDDIT_REDIRECT_URI", "QUAINY_REDDIT_REDIRECT_URI"),
+            "scope_env": ("REDDIT_SCOPES", "QUAINY_REDDIT_SCOPES"),
+            "default_scope": "identity read submit",
+            "default_target_type": "community",
+        },
+        "instagram": {
+            "authorize_url": f"https://www.facebook.com/{meta_oauth_version()}/dialog/oauth",
+            "token_url": f"https://graph.facebook.com/{meta_oauth_version()}/oauth/access_token",
+            "client_id_env": ("INSTAGRAM_CLIENT_ID", "QUAINY_INSTAGRAM_CLIENT_ID"),
+            "client_secret_env": ("INSTAGRAM_CLIENT_SECRET", "QUAINY_INSTAGRAM_CLIENT_SECRET"),
+            "redirect_uri_env": ("INSTAGRAM_REDIRECT_URI", "QUAINY_INSTAGRAM_REDIRECT_URI"),
+            "scope_env": ("INSTAGRAM_SCOPES", "QUAINY_INSTAGRAM_SCOPES"),
+            "default_scope": "pages_show_list instagram_basic instagram_content_publish",
+            "default_target_type": "business_account",
+        },
+    }
+    if provider_key not in configs:
+        raise HTTPException(status_code=404, detail="Publishing provider not supported.")
+    return provider_key, configs[provider_key]
+
+
+def complete_publishing_oauth_callback(provider: str, code: str, state: str, actor_id: str = "local_user") -> tuple[PublishingOAuthCallback, str | None]:
+    state_parts = state.split(":")
+    if len(state_parts) < 3:
+        raise HTTPException(status_code=400, detail="Invalid OAuth state.")
+    organization_id, state_provider = state_parts[0], state_parts[1]
+    frontend_origin = decode_frontend_origin_state(state_parts[3]) if len(state_parts) >= 4 else None
+    provider_key, config = publishing_oauth_config(provider)
+    if state_provider != provider_key:
+        raise HTTPException(status_code=400, detail="OAuth provider state mismatch.")
+    store.get_organization(organization_id)
+    token_payload = exchange_publishing_oauth_code(provider_key, config, code)
+    account_metadata = fetch_publishing_account_metadata(provider_key, str(token_payload.get("access_token") or ""))
+    selected_target = first_publishing_target(provider_key, account_metadata)
+    scopes = scopes_from_token_payload(token_payload, config["scope_env"], str(config["default_scope"]))
+    expires_at = None
+    if token_payload.get("expires_in") is not None:
+        try:
+            expires_at = now_utc() + timedelta(seconds=int(token_payload["expires_in"]))
+        except (TypeError, ValueError):
+            expires_at = None
+    connection = store.get_publishing_connection(organization_id, PublishingProvider(provider_key))
+    connection = connection.model_copy(
+        update={
+            "oauth_status": "validated",
+            "scopes": scopes,
+            "access_token": str(token_payload.get("access_token") or ""),
+            "refresh_token": str(token_payload.get("refresh_token") or connection.refresh_token or "") or None,
+            "token_type": str(token_payload.get("token_type") or "bearer"),
+            "expires_at": expires_at,
+            "account_id": account_id_from_metadata(account_metadata) or account_id_from_token_payload(provider_key, token_payload),
+            "account_name": account_name_from_metadata(account_metadata) or account_name_from_token_payload(provider_key, token_payload),
+            "selected_target_type": str(config["default_target_type"]),
+            "selected_target_id": selected_target.get("id") or default_target_id(provider_key, token_payload),
+            "selected_target_name": selected_target.get("name") or default_target_name(provider_key, token_payload),
+            "publishing_enabled": True,
+        }
+    )
+    saved = store.upsert_publishing_connection(connection, actor_id)
+    callback = PublishingOAuthCallback(
+        provider=PublishingProvider(provider_key),
+        status="connected",
+        message=f"{provider_key.title()} connected.",
+        connection=saved,
+    )
+    return callback, frontend_origin
+
+
+def exchange_publishing_oauth_code(provider: str, config: dict[str, object], code: str) -> dict[str, object]:
+    client_id = first_env(config["client_id_env"])  # type: ignore[arg-type]
+    client_secret = first_env(config["client_secret_env"])  # type: ignore[arg-type]
+    redirect_uri = first_env(config["redirect_uri_env"])  # type: ignore[arg-type]
+    if not client_id or not client_secret or not redirect_uri:
+        raise HTTPException(status_code=400, detail=f"{provider.title()} OAuth token exchange is not configured.")
+    body = urlencode(
+        {
+            "grant_type": "authorization_code",
+            "code": code,
+            "redirect_uri": redirect_uri,
+            "client_id": client_id,
+            "client_secret": client_secret,
+        }
+    ).encode("utf-8")
+    request = Request(
+        str(config["token_url"]),
+        data=body,
+        headers={"Content-Type": "application/x-www-form-urlencoded", "Accept": "application/json"},
+        method="POST",
+    )
+    try:
+        with urlopen(request, timeout=20) as response:
+            return json.loads(response.read().decode("utf-8"))
+    except Exception as error:
+        raise HTTPException(status_code=502, detail=f"{provider.title()} OAuth token exchange failed.") from error
+
+
+def fetch_publishing_account_metadata(provider: str, access_token: str) -> dict[str, object]:
+    if not access_token:
+        return {}
+    try:
+        if provider == "linkedin":
+            account = oauth_get_json("https://api.linkedin.com/v2/userinfo", access_token)
+            pages = oauth_get_json(
+                "https://api.linkedin.com/v2/organizationAcls"
+                "?q=roleAssignee&role=ADMINISTRATOR&projection=(elements*(organization,organization~(localizedName)))",
+                access_token,
+            )
+            return {"account": account, "targets": linkedin_company_targets(pages)}
+        if provider == "reddit":
+            account = oauth_get_json("https://oauth.reddit.com/api/v1/me", access_token)
+            return {"account": account}
+        if provider == "instagram":
+            account = oauth_get_json(
+                f"https://graph.facebook.com/{meta_oauth_version()}/me?fields=id,name",
+                access_token,
+            )
+            pages = oauth_get_json(
+                f"https://graph.facebook.com/{meta_oauth_version()}/me/accounts"
+                "?fields=id,name,instagram_business_account{id,username}",
+                access_token,
+            )
+            return {"account": account, "targets": instagram_business_targets(pages)}
+    except Exception:
+        return {}
+    return {}
+
+
+def oauth_get_json(url: str, access_token: str) -> dict[str, object]:
+    request = Request(url, headers={"Authorization": f"Bearer {access_token}", "Accept": "application/json"})
+    with urlopen(request, timeout=20) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+
+def linkedin_company_targets(payload: dict[str, object]) -> list[dict[str, str]]:
+    targets: list[dict[str, str]] = []
+    elements = payload.get("elements")
+    if not isinstance(elements, list):
+        return targets
+    for item in elements:
+        if not isinstance(item, dict):
+            continue
+        organization = item.get("organization")
+        organization_detail = item.get("organization~")
+        target_id = str(organization or "")
+        target_name = ""
+        if isinstance(organization_detail, dict):
+            target_name = str(organization_detail.get("localizedName") or "")
+        if target_id:
+            targets.append({"id": target_id, "name": target_name})
+    return targets
+
+
+def instagram_business_targets(payload: dict[str, object]) -> list[dict[str, str]]:
+    targets: list[dict[str, str]] = []
+    pages = payload.get("data")
+    if not isinstance(pages, list):
+        return targets
+    for page in pages:
+        if not isinstance(page, dict):
+            continue
+        account = page.get("instagram_business_account")
+        if not isinstance(account, dict):
+            continue
+        target_id = str(account.get("id") or "")
+        target_name = str(account.get("username") or page.get("name") or "")
+        if target_id:
+            targets.append({"id": target_id, "name": target_name})
+    return targets
+
+
+def first_publishing_target(provider: str, metadata: dict[str, object]) -> dict[str, str]:
+    targets = metadata.get("targets")
+    if isinstance(targets, list) and targets and isinstance(targets[0], dict):
+        return {key: str(value) for key, value in targets[0].items() if value is not None}
+    return {}
+
+
+def scopes_from_token_payload(payload: dict[str, object], scope_env: object, default_scope: str) -> list[str]:
+    scope_value = payload.get("scope") or scope_value_from_config(scope_env, default_scope)
+    if isinstance(scope_value, str):
+        return [scope for scope in scope_value.replace(",", " ").split() if scope]
+    return []
+
+
+def scope_value_from_config(scope_env: object, default_scope: str) -> str:
+    if isinstance(scope_env, tuple):
+        return first_env(scope_env) or default_scope
+    return os.getenv(str(scope_env)) or default_scope
+
+
+def account_id_from_token_payload(provider: str, payload: dict[str, object]) -> str | None:
+    for key in ("account_id", "user_id", "id", "sub"):
+        value = payload.get(key)
+        if value:
+            return str(value)
+    return None
+
+
+def account_id_from_metadata(metadata: dict[str, object]) -> str | None:
+    account = metadata.get("account")
+    if isinstance(account, dict):
+        for key in ("sub", "id", "name"):
+            value = account.get(key)
+            if value:
+                return str(value)
+    return None
+
+
+def account_name_from_token_payload(provider: str, payload: dict[str, object]) -> str | None:
+    for key in ("account_name", "name", "username"):
+        value = payload.get(key)
+        if value:
+            return str(value)
+    return None
+
+
+def account_name_from_metadata(metadata: dict[str, object]) -> str | None:
+    account = metadata.get("account")
+    if isinstance(account, dict):
+        for key in ("name", "localizedFirstName", "preferred_username"):
+            value = account.get(key)
+            if value:
+                return str(value)
+    return None
+
+
+def default_target_id(provider: str, payload: dict[str, object]) -> str | None:
+    if provider == "linkedin":
+        return str(payload.get("page_urn") or payload.get("organization_urn") or "") or None
+    if provider == "reddit":
+        return str(payload.get("subreddit") or "") or None
+    if provider == "instagram":
+        return str(payload.get("instagram_business_account_id") or payload.get("page_id") or "") or None
+    return None
+
+
+def default_target_name(provider: str, payload: dict[str, object]) -> str | None:
+    if provider == "linkedin":
+        return str(payload.get("page_name") or payload.get("organization_name") or "") or None
+    if provider == "reddit":
+        return str(payload.get("subreddit_name") or payload.get("subreddit") or "") or None
+    if provider == "instagram":
+        return str(payload.get("instagram_business_account_name") or payload.get("page_name") or "") or None
+    return None
+
+
+def first_env(names: tuple[str, ...]) -> str | None:
+    for name in names:
+        value = resolve_secret_reference(name)
+        if value:
+            return value
+    return None
+
+
+def meta_oauth_version() -> str:
+    return resolve_secret_reference("META_OAUTH_VERSION") or resolve_secret_reference("QUAINY_META_OAUTH_VERSION") or "v20.0"
+
+
+def frontend_url() -> str:
+    return (
+        resolve_secret_reference("VOUCH_FRONTEND_URL")
+        or resolve_secret_reference("QUAINY_FRONTEND_URL")
+        or "http://127.0.0.1:5173"
+    ).rstrip("/")
+
+
+def publishing_oauth_state(organization_id: str, provider_key: str, frontend_origin: str | None = None) -> str:
+    state_parts = [organization_id, provider_key, secrets.token_urlsafe(24)]
+    trusted_origin = trusted_frontend_origin(frontend_origin)
+    if trusted_origin:
+        state_parts.append(base64.urlsafe_b64encode(trusted_origin.encode("utf-8")).decode("ascii").rstrip("="))
+    return ":".join(state_parts)
+
+
+def trusted_frontend_origin(origin: str | None) -> str | None:
+    if not origin:
+        return None
+    parsed = urlparse(origin)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc or parsed.path not in {"", "/"}:
+        return None
+    normalized = f"{parsed.scheme}://{parsed.netloc}".rstrip("/")
+    configured = {frontend_url()}
+    local_hosts = {"localhost", "127.0.0.1"}
+    if normalized in configured or parsed.hostname in local_hosts:
+        return normalized
+    return None
+
+
+def decode_frontend_origin_state(value: str) -> str | None:
+    try:
+        padded = value + "=" * (-len(value) % 4)
+        decoded = base64.urlsafe_b64decode(padded.encode("ascii")).decode("utf-8")
+    except (ValueError, UnicodeDecodeError):
+        return None
+    return trusted_frontend_origin(decoded)
+
+
+def publishing_oauth_redirect(callback: PublishingOAuthCallback, frontend_origin: str | None = None) -> RedirectResponse:
+    query = urlencode(
+        {
+            "oauth_provider": callback.provider.value,
+            "oauth_status": callback.status,
+            "oauth_message": callback.message,
+        }
+    )
+    return RedirectResponse(f"{trusted_frontend_origin(frontend_origin) or frontend_url()}/?{query}", status_code=303)
 
 
 def summarize_list_result(items: list[object], id_attr: str = "id") -> dict[str, object]:
@@ -582,6 +959,49 @@ def update_linkedin_integration(
         raise not_found(error) from error
 
 
+@app.get("/organizations/{organization_id}/publishing-connections", response_model=list[PublishingConnection])
+def list_publishing_connections(
+    organization_id: str,
+    authorization: str | None = Header(default=None),
+) -> list[PublishingConnection]:
+    try:
+        actor_from_optional_auth(organization_id, authorization)
+        return store.list_publishing_connections(organization_id)
+    except AuthenticationError as error:
+        raise authentication_failed(error) from error
+    except NotFoundError as error:
+        raise not_found(error) from error
+
+
+@app.post("/organizations/{organization_id}/publishing-connections/{provider}/oauth/start", response_model=PublishingOAuthStart)
+def start_publishing_oauth(
+    organization_id: str,
+    provider: str,
+    actor_id: str = "local_user",
+    authorization: str | None = Header(default=None),
+    origin: str | None = Header(default=None),
+) -> PublishingOAuthStart:
+    try:
+        require_org_role(organization_id, authorization, {UserRole.owner}, actor_id)
+        return build_publishing_oauth_start(organization_id, provider, origin)
+    except AuthenticationError as error:
+        raise authentication_failed(error) from error
+    except PermissionDeniedError as error:
+        raise permission_denied(error) from error
+    except NotFoundError as error:
+        raise not_found(error) from error
+
+
+@app.get("/publishing-connections/{provider}/oauth/callback")
+def finish_publishing_oauth(
+    provider: str,
+    code: str = Query(...),
+    state: str = Query(...),
+):
+    callback, frontend_origin = complete_publishing_oauth_callback(provider, code, state)
+    return publishing_oauth_redirect(callback, frontend_origin)
+
+
 @app.post("/organizations/{organization_id}/sources", response_model=Source)
 def create_source(
     organization_id: str,
@@ -777,6 +1197,8 @@ def generate_opportunities(
         raise permission_denied(error) from error
     except NotFoundError as error:
         raise not_found(error) from error
+    except RuntimeError as error:
+        raise generation_failed(error) from error
 
 
 @app.get("/organizations/{organization_id}/opportunities")
@@ -919,6 +1341,8 @@ def create_brief(
         raise permission_denied(error) from error
     except NotFoundError as error:
         raise not_found(error) from error
+    except RuntimeError as error:
+        raise generation_failed(error) from error
 
 
 @app.get("/opportunities/{opportunity_id}", response_model=ContentOpportunity)
@@ -971,6 +1395,8 @@ def generate_drafts(
     brief_id: str,
     platform: str = "linkedin",
     content_type: str = "company_post",
+    reddit_community: str = "",
+    reddit_rules: str = "",
     authorization: str | None = Header(default=None),
 ) -> DraftCreateResult:
     try:
@@ -982,8 +1408,14 @@ def generate_drafts(
             JobKind.draft_generation,
             "brief",
             brief_id,
-            {"brief_id": brief_id, "platform": platform, "content_type": content_type},
-            lambda: store.generate_drafts(brief_id, platform, content_type, actor_id),
+            {
+                "brief_id": brief_id,
+                "platform": platform,
+                "content_type": content_type,
+                "reddit_community": reddit_community,
+                "reddit_rules": reddit_rules,
+            },
+            lambda: store.generate_drafts(brief_id, platform, content_type, actor_id, reddit_community, reddit_rules),
             summarize_list_result,
         )
         if drafts:
@@ -996,6 +1428,8 @@ def generate_drafts(
         raise permission_denied(error) from error
     except NotFoundError as error:
         raise not_found(error) from error
+    except RuntimeError as error:
+        raise generation_failed(error) from error
 
 
 @app.get("/drafts/{draft_id}", response_model=Draft)
@@ -1284,6 +1718,8 @@ def retry_job(
                     str(job.payload.get("platform", "linkedin")),
                     str(job.payload.get("content_type", "company_post")),
                     actor_id,
+                    str(job.payload.get("reddit_community", "")),
+                    str(job.payload.get("reddit_rules", "")),
                 ),
                 summarize_list_result,
             )
@@ -1328,6 +1764,8 @@ def retry_job(
         raise permission_denied(error) from error
     except NotFoundError as error:
         raise not_found(error) from error
+    except RuntimeError as error:
+        raise generation_failed(error) from error
 
 
 @app.get("/organizations/{organization_id}/memory")

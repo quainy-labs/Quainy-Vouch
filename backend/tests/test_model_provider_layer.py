@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from typing import Any
-
 from fastapi.testclient import TestClient
 
 from app.main import app, store
@@ -192,6 +191,160 @@ class SocialDraftStructuredProvider:
         )
 
 
+class ProviderFailureDraftProvider:
+    provider_name = "quota-test-provider"
+    model = "quota-model-v1"
+
+    def generate_structured(
+        self,
+        prompt: str,
+        schema_name: str,
+        json_schema: dict[str, Any] | None = None,
+    ) -> ModelProviderResult:
+        if schema_name == "DraftRecommendationSet":
+            raise RuntimeError("Model provider request failed. Provider returned 429: RESOURCE_EXHAUSTED quota exceeded.")
+        return ModelProviderResult(
+            provider=self.provider_name,
+            model=self.model,
+            output={"recommendations": []},
+            token_usage={"total_tokens": 4},
+        )
+
+
+class MixedLinkedInDraftProvider:
+    provider_name = "mixed-linkedin-test-provider"
+    model = "mixed-linkedin-v1"
+
+    def generate_structured(
+        self,
+        prompt: str,
+        schema_name: str,
+        json_schema: dict[str, Any] | None = None,
+    ) -> ModelProviderResult:
+        if schema_name == "DraftRecommendationSet":
+            body_one = (
+                "Approved context works best when reviewer control stays visible.\n\n"
+                "The useful shift is simple: public stories should keep source visibility, cautious claims, "
+                "and operator-facing lessons connected before anything is approved.\n\n"
+                "That gives founders and operators a clearer way to turn real company knowledge into a public update."
+            )
+            body_two = (
+                "Public communication gets stronger when the proof is easy to inspect.\n\n"
+                "This workflow starts from approved context, keeps reviewer control in the loop, "
+                "and uses cautious claims instead of asking a blank prompt to invent the angle.\n\n"
+                "The result is a source-visible story an operator can review before publishing."
+            )
+            return ModelProviderResult(
+                provider=self.provider_name,
+                model=self.model,
+                output={
+                    "variants": [
+                        {"hook": "Keep reviewer control visible", "body": body_one, "hashtags": []},
+                        {"hook": "Make the proof inspectable", "body": body_two, "hashtags": []},
+                        {"hook": "Too short", "body": "Approved context helps.", "hashtags": []},
+                    ]
+                },
+                token_usage={"total_tokens": 34},
+            )
+        return ModelProviderResult(
+            provider=self.provider_name,
+            model=self.model,
+            output={"recommendations": []},
+            token_usage={"total_tokens": 4},
+        )
+
+
+class LongSingleParagraphInstagramProvider:
+    provider_name = "instagram-single-paragraph-test-provider"
+    model = "instagram-single-paragraph-v1"
+
+    def generate_structured(
+        self,
+        prompt: str,
+        schema_name: str,
+        json_schema: dict[str, Any] | None = None,
+    ) -> ModelProviderResult:
+        if schema_name == "DraftRecommendationSet":
+            body = (
+                "Approved context helps teams create public stories with reviewer control. Source visibility keeps the proof close to the message. "
+                "Cautious claims make the final post easier for a human to trust. Operator-facing lessons help founders understand what changed before publishing. "
+                "That is why source-grounded workflows are useful for public communication."
+            )
+            return ModelProviderResult(
+                provider=self.provider_name,
+                model=self.model,
+                output={"variants": [{"hook": "Keep the proof close", "body": body, "hashtags": ["#SourceBacked"]}]},
+                token_usage={"total_tokens": 24},
+            )
+        return ModelProviderResult(
+            provider=self.provider_name,
+            model=self.model,
+            output={"recommendations": []},
+            token_usage={"total_tokens": 4},
+        )
+
+
+class InstagramCompanyBioDraftProvider:
+    provider_name = "instagram-company-bio-test-provider"
+    model = "instagram-company-bio-v1"
+
+    def generate_structured(
+        self,
+        prompt: str,
+        schema_name: str,
+        json_schema: dict[str, Any] | None = None,
+    ) -> ModelProviderResult:
+        if schema_name == "DraftRecommendationSet":
+            body = (
+                "Quainy is a builder-first AI ecosystem. We build active products like Quainy Vouch. "
+                "Quainy Vouch is a secure, source-grounded communication agent. It helps teams use approved "
+                "company knowledge for consistent content. With human approval before publishing."
+            )
+            return ModelProviderResult(
+                provider=self.provider_name,
+                model=self.model,
+                output={"variants": [{"hook": "How do you ensure your company's AI communication is accurate?", "body": body, "hashtags": []}]},
+                token_usage={"total_tokens": 22},
+            )
+        return ModelProviderResult(
+            provider=self.provider_name,
+            model=self.model,
+            output={"recommendations": []},
+            token_usage={"total_tokens": 4},
+        )
+
+
+class InstagramCorporateBlurbDraftProvider:
+    provider_name = "instagram-corporate-blurb-test-provider"
+    model = "instagram-corporate-blurb-v1"
+
+    def generate_structured(
+        self,
+        prompt: str,
+        schema_name: str,
+        json_schema: dict[str, Any] | None = None,
+    ) -> ModelProviderResult:
+        if schema_name == "DraftRecommendationSet":
+            body = (
+                "Meaningful ideas drive useful products.\n\n"
+                "Quainy offers a dedicated library, Meaningful Problems, to help builders. "
+                "It is designed for understanding what is worth solving, who it affects, and why a product should exist.\n\n"
+                "This insight is foundational to Quainy's mission to create production-ready products."
+            )
+            return ModelProviderResult(
+                provider=self.provider_name,
+                model=self.model,
+                output={"variants": [{"hook": "What problem are you really solving with AI?", "body": body, "hashtags": []}]},
+                token_usage={"total_tokens": 28},
+            )
+        return ModelProviderResult(
+            provider=self.provider_name,
+            model=self.model,
+            output={"recommendations": []},
+            token_usage={"total_tokens": 4},
+        )
+
+
 class InstagramAnnouncementDraftProvider:
     provider_name = "instagram-announcement-test-provider"
     model = "instagram-announcement-v1"
@@ -322,6 +475,21 @@ def create_context_org(name: str) -> dict:
     return org
 
 
+def enable_live_model_generation(org_id: str) -> None:
+    client.patch(
+        f"/organizations/{org_id}/ai-provider-settings",
+        json={
+            "generation_provider": "openai_compatible",
+            "generation_model": "live-test-model",
+            "generation_base_url": "https://models.example.test/v1",
+            "generation_api_key_env_var": "LIVE_MODEL_KEY",
+            "embedding_provider": "deterministic",
+            "embedding_model": "local-hash",
+            "enabled": True,
+        },
+    ).raise_for_status()
+
+
 def test_structured_model_calls_are_logged_and_attached_to_artifacts():
     org = create_context_org("Model Call Org")
 
@@ -356,6 +524,26 @@ def test_invalid_structured_model_output_fails_safe_and_is_logged():
     assert draft["body"]
     assert any(call["status"] == "failed" and call["provider"] == "invalid-test-provider" for call in calls)
     assert all(call["prompt_hash"] for call in calls)
+
+
+def test_live_model_opportunity_failure_does_not_create_deterministic_fallback(monkeypatch):
+    org = create_context_org("Live Failed Opportunity Org")
+    enable_live_model_generation(org["id"])
+    monkeypatch.setattr(store, "model_provider_for_org", lambda organization_id: InvalidStructuredProvider())
+
+    response = client.post(f"/organizations/{org['id']}/opportunities/generate")
+
+    assert response.status_code == 422
+    assert "No deterministic fallback was used" in response.json()["detail"]
+    assert client.get(f"/organizations/{org['id']}/opportunities").json() == []
+    calls = client.get(f"/organizations/{org['id']}/model-calls").json()
+    opportunity_call = next(call for call in calls if call["schema_name"] == "OpportunityRecommendationSet")
+    assert opportunity_call["status"] == "failed"
+    assert opportunity_call["provider"] == "invalid-test-provider"
+    jobs = client.get(f"/organizations/{org['id']}/jobs").json()
+    generation_job = next(job for job in jobs if job["kind"] == "opportunity_generation")
+    assert generation_job["status"] == "failed"
+    assert "No deterministic fallback was used" in generation_job["error_message"]
 
 
 def test_grounded_model_recommendation_becomes_top_opportunity():
@@ -445,6 +633,22 @@ def test_source_irrelevant_llm_opportunity_is_rejected():
     assert opportunity_call["provider"] == "irrelevant-opportunity-test-provider"
 
 
+def test_live_model_weak_opportunities_are_rejected_without_fallback(monkeypatch):
+    org = create_context_org("Live Weak Opportunity Org")
+    enable_live_model_generation(org["id"])
+    monkeypatch.setattr(store, "model_provider_for_org", lambda organization_id: GenericOpportunityStructuredProvider())
+
+    response = client.post(f"/organizations/{org['id']}/opportunities/generate")
+
+    assert response.status_code == 422
+    assert "no source-grounded opportunities" in response.json()["detail"]
+    assert client.get(f"/organizations/{org['id']}/opportunities").json() == []
+    calls = client.get(f"/organizations/{org['id']}/model-calls").json()
+    opportunity_call = next(call for call in calls if call["schema_name"] == "OpportunityRecommendationSet")
+    assert opportunity_call["status"] == "succeeded"
+    assert opportunity_call["provider"] == "generic-opportunity-test-provider"
+
+
 def test_social_draft_model_output_becomes_visible_draft_body():
     org = create_context_org("Social Draft Model Org")
     opportunity = client.post(f"/organizations/{org['id']}/opportunities/generate").json()["opportunities"][0]
@@ -514,6 +718,125 @@ def test_instagram_announcement_prose_is_rejected_for_caption_body():
     assert instagram["body"].startswith("Build from what is true.")
     assert "what is worth building" in lowered
     assert "without replacing judgment" in lowered
+
+
+def test_live_model_rejected_instagram_draft_does_not_save_adapter_fallback(monkeypatch):
+    org = client.post("/organizations", json={"name": "Live Instagram Draft Org"}).json()
+    client.patch(
+        f"/organizations/{org['id']}/profile",
+        json={
+            "audience": "AI builders and founders",
+            "content_pillars": ["product judgment", "AI building"],
+        },
+    ).raise_for_status()
+    client.post(
+        f"/organizations/{org['id']}/sources",
+        json={
+            "source_type": "manual_note",
+            "title": "Published blog today",
+            "raw_text": (
+                "The organization published Product Judgment in the AI Era today. "
+                "The blog explains how builders decide what is worth building, who it should serve, "
+                "what promise to make, and how to use AI without losing product sense. "
+            )
+            * 4,
+            "approval_status": "approved",
+        },
+    ).raise_for_status()
+
+    opportunity = client.post(f"/organizations/{org['id']}/opportunities/generate").json()["opportunities"][0]
+    brief = client.post(f"/opportunities/{opportunity['id']}/briefs").json()
+    enable_live_model_generation(org["id"])
+    monkeypatch.setattr(store, "model_provider_for_org", lambda organization_id: InstagramAnnouncementDraftProvider())
+
+    response = client.post(f"/briefs/{brief['id']}/drafts?platform=instagram&content_type=post")
+
+    assert response.status_code == 422
+    assert "No fallback draft was saved" in response.json()["detail"]
+    assert client.get(f"/briefs/{brief['id']}/drafts").json() == []
+    calls = client.get(f"/organizations/{org['id']}/model-calls").json()
+    draft_call = next(call for call in calls if call["schema_name"] == "DraftRecommendationSet")
+    assert draft_call["status"] == "succeeded"
+    jobs = client.get(f"/organizations/{org['id']}/jobs").json()
+    draft_job = next(job for job in jobs if job["kind"] == "draft_generation")
+    assert draft_job["status"] == "failed"
+    assert "No fallback draft was saved" in draft_job["error_message"]
+
+
+def test_live_model_provider_quota_failure_returns_502(monkeypatch):
+    org = create_context_org("Live Quota Draft Org")
+    opportunity = client.post(f"/organizations/{org['id']}/opportunities/generate").json()["opportunities"][0]
+    brief = client.post(f"/opportunities/{opportunity['id']}/briefs").json()
+    enable_live_model_generation(org["id"])
+    monkeypatch.setattr(store, "model_provider_for_org", lambda organization_id: ProviderFailureDraftProvider())
+
+    response = client.post(f"/briefs/{brief['id']}/drafts?platform=instagram&content_type=post")
+
+    assert response.status_code == 502
+    assert "RESOURCE_EXHAUSTED" in response.json()["detail"]
+    assert client.get(f"/briefs/{brief['id']}/drafts").json() == []
+
+
+def test_live_model_instagram_single_paragraph_is_split_before_validation(monkeypatch):
+    org = create_context_org("Instagram Single Paragraph Org")
+    opportunity = client.post(f"/organizations/{org['id']}/opportunities/generate").json()["opportunities"][0]
+    brief = client.post(f"/opportunities/{opportunity['id']}/briefs").json()
+    enable_live_model_generation(org["id"])
+    monkeypatch.setattr(store, "model_provider_for_org", lambda organization_id: LongSingleParagraphInstagramProvider())
+
+    response = client.post(f"/briefs/{brief['id']}/drafts?platform=instagram&content_type=post")
+
+    assert response.status_code == 200
+    draft = response.json()["drafts"][0]
+    assert draft["generation_metadata"]["body_source"] == "model_recommendation"
+    assert "\n\n" in draft["body"]
+    assert "instagram_long_single_paragraph" not in draft["generation_metadata"].get("model_rejection_reasons", [])
+
+
+def test_live_model_instagram_company_bio_copy_is_rejected(monkeypatch):
+    org = create_context_org("Instagram Company Bio Org")
+    opportunity = client.post(f"/organizations/{org['id']}/opportunities/generate").json()["opportunities"][0]
+    brief = client.post(f"/opportunities/{opportunity['id']}/briefs").json()
+    enable_live_model_generation(org["id"])
+    monkeypatch.setattr(store, "model_provider_for_org", lambda organization_id: InstagramCompanyBioDraftProvider())
+
+    response = client.post(f"/briefs/{brief['id']}/drafts?platform=instagram&content_type=post")
+
+    assert response.status_code == 422
+    assert "instagram_company_bio_copy" in response.json()["detail"]
+    assert client.get(f"/briefs/{brief['id']}/drafts").json() == []
+
+
+def test_live_model_instagram_corporate_blurb_is_rejected(monkeypatch):
+    org = create_context_org("Instagram Corporate Blurb Org")
+    opportunity = client.post(f"/organizations/{org['id']}/opportunities/generate").json()["opportunities"][0]
+    brief = client.post(f"/opportunities/{opportunity['id']}/briefs").json()
+    enable_live_model_generation(org["id"])
+    monkeypatch.setattr(store, "model_provider_for_org", lambda organization_id: InstagramCorporateBlurbDraftProvider())
+
+    response = client.post(f"/briefs/{brief['id']}/drafts?platform=instagram&content_type=post")
+
+    assert response.status_code == 422
+    assert "instagram_corporate_blurb" in response.json()["detail"]
+    assert client.get(f"/briefs/{brief['id']}/drafts").json() == []
+
+
+def test_live_model_saves_valid_draft_variants_when_one_variant_is_rejected(monkeypatch):
+    org = create_context_org("Mixed LinkedIn Draft Org")
+    opportunity = client.post(f"/organizations/{org['id']}/opportunities/generate").json()["opportunities"][0]
+    brief = client.post(f"/opportunities/{opportunity['id']}/briefs").json()
+    enable_live_model_generation(org["id"])
+    monkeypatch.setattr(store, "model_provider_for_org", lambda organization_id: MixedLinkedInDraftProvider())
+
+    response = client.post(f"/briefs/{brief['id']}/drafts?platform=linkedin&content_type=company_post")
+
+    assert response.status_code == 200
+    drafts = response.json()["drafts"]
+    assert len(drafts) == 2
+    assert all(draft["generation_metadata"]["body_source"] == "model_recommendation" for draft in drafts)
+    assert {draft["hook"] for draft in drafts} == {"Keep reviewer control visible", "Make the proof inspectable"}
+    stored = client.get(f"/briefs/{brief['id']}/drafts").json()
+    assert len(stored) == 2
 
 
 def test_instagram_labs_promo_or_source_dump_is_rejected():

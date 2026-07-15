@@ -13,6 +13,7 @@ import { FileCheck2, Layers, ListChecks, ShieldCheck, Sparkles } from "lucide-re
 import { useEffect, useState } from "react";
 import {
   contentTypeDisplayName,
+  draftFormatLabel,
   formatChoiceLabel,
   formatChoicePlatform,
   platformDisplayName,
@@ -46,6 +47,7 @@ type StudioViewProps = {
   opportunityCount: number;
   selectedBrief: ContentBrief | null;
   sectionRequest: { section: StudioSection; requestedAt: number } | null;
+  redditCommunity: string;
   formatChoice: FormatChoice;
   drafts: Draft[];
   selectedDraft: Draft | null;
@@ -63,6 +65,7 @@ type StudioViewProps = {
   onSectionRequestHandled: () => void;
   onShowMoreOpportunities: () => void;
   onSelectContentFormat: (choice: FormatChoice) => void;
+  onRedditCommunityChange: (value: string) => void;
   onGenerateDraftsFromBrief: () => void | Promise<void>;
   onSelectDraft: (draft: Draft) => void;
   onEditedBodyChange: (body: string) => void;
@@ -98,6 +101,7 @@ export function StudioView({
   opportunityCount,
   selectedBrief,
   sectionRequest,
+  redditCommunity,
   formatChoice,
   drafts,
   selectedDraft,
@@ -115,6 +119,7 @@ export function StudioView({
   onSectionRequestHandled,
   onShowMoreOpportunities,
   onSelectContentFormat,
+  onRedditCommunityChange,
   onGenerateDraftsFromBrief,
   onSelectDraft,
   onEditedBodyChange,
@@ -209,7 +214,7 @@ export function StudioView({
     trustTimelineItems.push({
       step: "Draft",
       title: `${platformDisplayName(selectedDraft.platform)} ${contentTypeDisplayName(selectedDraft.content_type)}`,
-      detail: `${selectedDraftAdapter} generated this artifact with ${selectedDraft.source_ids.length} source${
+      detail: `${selectedDraftAdapter} generated this ${draftFormatLabel(selectedDraft).toLowerCase()} with ${selectedDraft.source_ids.length} source${
         selectedDraft.source_ids.length === 1 ? "" : "s"
       } and ${selectedDraftPromptVersion}.`,
       status: "complete",
@@ -248,7 +253,7 @@ export function StudioView({
       <div className="section-heading">
         <div>
           <p className="eyebrow">Studio workflow</p>
-          <h2>Opportunity to reviewed artifact</h2>
+          <h2>Opportunity to reviewed post</h2>
         </div>
         <span className="hero-badge">{selectedBrief ? "Brief ready" : "No active brief"}</span>
       </div>
@@ -370,10 +375,12 @@ export function StudioView({
               opportunityLabel={selectedBriefOpportunityLabel}
               selectedFormatLabel={selectedFormatLabel}
               formatChoice={formatChoice}
+              redditCommunity={redditCommunity}
               busy={busy}
               canEditContent={canEditContent}
               permissionMessage={knowledgePermissionMessage}
               onSelectContentFormat={onSelectContentFormat}
+              onRedditCommunityChange={onRedditCommunityChange}
               onGenerateDrafts={async () => {
                 await onGenerateDraftsFromBrief();
                 selectSection("drafts");

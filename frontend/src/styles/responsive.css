@@ -56,6 +56,7 @@
   .strategy-grid.secondary,
   .preview-layout,
   .brief-grid,
+  .reddit-community-fields,
   .manual-metrics,
   .team-form,
   .review-context-card {
@@ -177,6 +178,7 @@
   .source-health-grid,
   .trust-timeline,
   .setup-grid,
+  .ai-provider-section,
   .workflow-grid {
     grid-template-columns: 1fr;
   }
@@ -188,6 +190,15 @@
   .section-heading {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .publishing-connector {
+    align-items: stretch;
+    grid-template-columns: 1fr;
+  }
+
+  .publishing-connector .icon-button {
+    justify-content: center;
   }
 
   .setup-actions {

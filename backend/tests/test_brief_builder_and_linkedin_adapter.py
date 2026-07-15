@@ -334,6 +334,21 @@ def test_reddit_and_instagram_post_adapters_are_supported_public_formats():
     assert "#" not in reddit.body
     assert any("Reddit post structure" in check for check in reddit_checks)
     assert any("planning labels" in check for check in reddit_checks)
+
+    community_adapter = RedditPostAdapter(target_community="r/learnpython")
+    community_reddit = community_adapter.render(community_adapter.variants()[0], profile, brief, opportunity)
+    community_spec = community_adapter.generation_spec(brief)
+    community_checks = community_adapter.quality_checks(community_reddit.body, profile, brief)
+
+    assert community_spec.metadata["target_community"] == "r/learnpython"
+    assert community_spec.metadata["community_rules"] == [
+        "Follow r/learnpython rules and posting norms",
+        "Avoid self-promotion unless the community explicitly allows it",
+        "Keep the post useful, specific, and discussion-oriented",
+    ]
+    assert "r/learnpython" in community_reddit.body
+    assert any("Names the target Reddit community" in check for check in community_checks)
+
     assert instagram_adapter.generation_spec(brief).platform == "instagram"
     assert instagram_adapter.generation_spec(brief).content_type == "post"
     assert instagram_adapter.generation_spec(brief).prompt_version == "instagram_post.v1"

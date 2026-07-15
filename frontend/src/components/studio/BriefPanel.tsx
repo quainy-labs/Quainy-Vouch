@@ -7,10 +7,12 @@ type BriefPanelProps = {
   opportunityLabel: string;
   selectedFormatLabel: string;
   formatChoice: FormatChoice;
+  redditCommunity: string;
   busy: boolean;
   canEditContent: boolean;
   permissionMessage: string;
   onSelectContentFormat: (choice: FormatChoice) => void;
+  onRedditCommunityChange: (value: string) => void;
   onGenerateDrafts: () => void | Promise<void>;
 };
 
@@ -20,12 +22,17 @@ export function BriefPanel({
   opportunityLabel,
   selectedFormatLabel,
   formatChoice,
+  redditCommunity,
   busy,
   canEditContent,
   permissionMessage,
   onSelectContentFormat,
+  onRedditCommunityChange,
   onGenerateDrafts,
 }: BriefPanelProps) {
+  const redditCommunityRequired = formatChoice === "reddit_post" && !redditCommunity.trim();
+  const draftGenerationDisabled = busy || !canEditContent || redditCommunityRequired;
+
   return (
     <section className="panel band brief-panel">
       <div className="section-heading">
@@ -48,14 +55,33 @@ export function BriefPanel({
           <button
             className="icon-button primary"
             onClick={() => void onGenerateDrafts()}
-            disabled={busy || !canEditContent}
-            title={canEditContent ? "Generate drafts" : permissionMessage}
+            disabled={draftGenerationDisabled}
+            title={
+              canEditContent
+                ? redditCommunityRequired
+                  ? "Add the target Reddit community before generating drafts"
+                  : "Generate drafts"
+                : permissionMessage
+            }
           >
             <FileCheck2 size={18} />
             <span>{busy ? "Generating..." : "Generate drafts"}</span>
           </button>
         </div>
       </div>
+      {formatChoice === "reddit_post" && (
+        <div className="reddit-community-fields">
+          <label className="field">
+            <span>Target community</span>
+            <input
+              value={redditCommunity}
+              onChange={(event) => onRedditCommunityChange(event.target.value)}
+              disabled={busy || !canEditContent}
+              placeholder="r/startups"
+            />
+          </label>
+        </div>
+      )}
       {busy && (
         <div className="work-status" role="status">
           <strong>Generating drafts</strong>

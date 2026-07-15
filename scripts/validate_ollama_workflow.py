@@ -8,10 +8,14 @@ from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 
-API_BASE = os.getenv("QUAINY_LIVE_API_BASE", "http://127.0.0.1:8000")
-GENERATION_MODEL = os.getenv("QUAINY_OLLAMA_GENERATION_MODEL", "llama3.2:3b")
-EMBEDDING_MODEL = os.getenv("QUAINY_OLLAMA_EMBEDDING_MODEL", "embeddinggemma:latest")
-OLLAMA_BASE_URL = os.getenv("QUAINY_OLLAMA_BASE_URL", "http://host.docker.internal:11434/v1")
+def env_value(name: str, legacy_name: str, default: str) -> str:
+    return os.getenv(name) or os.getenv(legacy_name) or default
+
+
+API_BASE = env_value("VOUCH_LIVE_API_BASE", "QUAINY_LIVE_API_BASE", "http://127.0.0.1:8000")
+GENERATION_MODEL = env_value("VOUCH_OLLAMA_GENERATION_MODEL", "QUAINY_OLLAMA_GENERATION_MODEL", "llama3.2:3b")
+EMBEDDING_MODEL = env_value("VOUCH_OLLAMA_EMBEDDING_MODEL", "QUAINY_OLLAMA_EMBEDDING_MODEL", "embeddinggemma:latest")
+OLLAMA_BASE_URL = env_value("VOUCH_OLLAMA_BASE_URL", "QUAINY_OLLAMA_BASE_URL", "http://host.docker.internal:11434/v1")
 
 
 def request_json(path: str, method: str = "GET", payload: dict[str, Any] | None = None, token: str | None = None) -> Any:

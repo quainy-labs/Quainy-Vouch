@@ -22,7 +22,8 @@ services:
     ports:
       - "8000:8000"
     environment:
-      DATABASE_URL: ${DATABASE_URL:-postgresql://quainy:quainy_dev_password@postgres:5432/quainy_vouch}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-quainy}:${POSTGRES_PASSWORD:-quainy_dev_password}@postgres:5432/${POSTGRES_DB:-quainy_vouch}
+      VOUCH_DATA_BACKEND: ${VOUCH_DATA_BACKEND:-postgres}
       QUAINY_DATA_BACKEND: ${QUAINY_DATA_BACKEND:-postgres}
       QUAINY_ENABLE_DEV_SEED: ${QUAINY_ENABLE_DEV_SEED:-false}
       QUAINY_FIXTURE_MODE: ${QUAINY_FIXTURE_MODE:-none}

@@ -9,6 +9,7 @@ import type {
   BackgroundJob,
   LinkedInIntegration,
   Organization,
+  PublishingConnection,
   SetupForm,
   SetupSection,
   UserForm,
@@ -29,6 +30,7 @@ type SettingsViewProps = {
   setupErrors: string[];
   setupSection: SetupSection;
   linkedinIntegration: LinkedInIntegration | null;
+  publishingConnections: PublishingConnection[];
   aiProviderSettings: AIProviderSettings | null;
   aiProviderDraft: AIProviderSettingsForm | null;
   aiProviderTest: AIProviderConnectionTest | null;
@@ -68,6 +70,7 @@ export function SettingsView({
   setupErrors,
   setupSection,
   linkedinIntegration,
+  publishingConnections,
   aiProviderSettings,
   aiProviderDraft,
   aiProviderTest,
@@ -174,6 +177,7 @@ export function SettingsView({
             setupErrors={setupErrors}
             setupSection={setupSection}
             linkedinIntegration={linkedinIntegration}
+            publishingConnections={publishingConnections}
             aiProviderSettings={aiProviderSettings}
             aiProviderDraft={aiProviderDraft}
             aiProviderTest={aiProviderTest}
@@ -194,13 +198,14 @@ export function SettingsView({
             canManageWorkspace={canManageWorkspace}
             workspacePermissionMessage={workspacePermissionMessage}
             eyebrow="Publishing"
-            title="LinkedIn publishing connection"
-            saveLabel="Save publishing"
+            title="Publishing connections"
+            showPrimaryAction={false}
             sectionIds={["linkedin"]}
             setupForm={setupForm}
             setupErrors={setupErrors}
             setupSection={setupSection}
             linkedinIntegration={linkedinIntegration}
+            publishingConnections={publishingConnections}
             aiProviderSettings={aiProviderSettings}
             aiProviderDraft={aiProviderDraft}
             aiProviderTest={aiProviderTest}

@@ -10,12 +10,13 @@ import type {
   LinkedInIntegration,
   Opportunity,
   PostMemory,
+  PublishingConnection,
   ReviewerPackage,
   ViewItem,
   WorkspaceUser,
   WorkspaceView,
 } from "../types";
-import { contentTypeDisplayName, platformDisplayName, sortOpportunities, summarizeNames } from "./forms";
+import { contentTypeDisplayName, draftFormatLabel, platformDisplayName, sortOpportunities, summarizeNames } from "./forms";
 
 type BuildWorkspaceModelInput = {
   bootstrap: Bootstrap;
@@ -25,6 +26,7 @@ type BuildWorkspaceModelInput = {
   selectedDraft: Draft | null;
   busy: boolean;
   linkedinIntegration: LinkedInIntegration | null;
+  publishingConnections: PublishingConnection[];
   jobs: BackgroundJob[];
   drafts: Draft[];
   memoryItems: PostMemory[];
@@ -61,6 +63,7 @@ export function buildWorkspaceModel({
   selectedDraft,
   busy,
   linkedinIntegration,
+  publishingConnections,
   jobs,
   drafts,
   memoryItems,
@@ -104,7 +107,7 @@ export function buildWorkspaceModel({
         : "Select a LinkedIn company page in Settings before publishing directly."
       : `Direct publishing is not configured for ${platformDisplayName(selectedDraft.platform)} ${contentTypeDisplayName(
           selectedDraft.content_type,
-        )}. Export the artifact or save a schedule intent for an external channel.`
+        )}. Export the ${draftFormatLabel(selectedDraft).toLowerCase()} or save a schedule intent for an external channel.`
     : "";
 
   const recentJobs = jobs.slice(0, 5);
@@ -230,6 +233,7 @@ export function buildWorkspaceModel({
     canScheduleDraft,
     canAttemptLinkedinPublish,
     publishCapabilityText,
+    publishingConnections,
     recentJobs,
     failedJobCount,
     viewItems,

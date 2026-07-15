@@ -22,13 +22,66 @@ type QuainyWorkspaceController =
   | { screen: "loading"; loadingProps: LoadingScreenProps }
   | { screen: "workspace"; workspaceProps: WorkspaceShellProps };
 
+const OAUTH_RESULT_STORAGE_KEY = "quainy_vouch_oauth_result";
+
 export function useQuainyWorkspaceController(): QuainyWorkspaceController {
   const state = useWorkspaceControllerState();
   const commonActions = createCommonActions(state);
 
   useEffect(() => {
-    void commonActions.loadWorkspace();
+    async function initializeWorkspace() {
+      await commonActions.loadWorkspace();
+      const params = new URLSearchParams(window.location.search);
+      const oauthProvider = params.get("oauth_provider");
+      const oauthStatus = params.get("oauth_status");
+      const oauthMessage = params.get("oauth_message");
+      if (!oauthProvider || !oauthStatus) return;
+      state.setActiveView("settings");
+      state.setSetupSection("linkedin");
+      state.setNotice(oauthMessage || `${oauthProvider} ${oauthStatus}.`);
+      localStorage.setItem(
+        OAUTH_RESULT_STORAGE_KEY,
+        JSON.stringify({ provider: oauthProvider, status: oauthStatus, message: oauthMessage, completedAt: Date.now() }),
+      );
+      window.history.replaceState({}, document.title, window.location.pathname);
+    }
+
+    void initializeWorkspace();
   }, []);
+
+  useEffect(() => {
+    function handleOAuthResult(event: StorageEvent) {
+      if (event.key !== OAUTH_RESULT_STORAGE_KEY) return;
+      let message = "Publishing connection updated.";
+      try {
+        const payload = JSON.parse(event.newValue || "{}") as { message?: string; provider?: string; status?: string };
+        message = payload.message || (payload.provider && payload.status ? `${payload.provider} ${payload.status}.` : message);
+      } catch {
+        // Ignore malformed cross-tab notifications; the refresh is still useful.
+      }
+      state.setActiveView("settings");
+      state.setSetupSection("linkedin");
+      state.setNotice(message);
+      void commonActions.refreshPublishingConnections();
+    }
+
+    window.addEventListener("storage", handleOAuthResult);
+    return () => window.removeEventListener("storage", handleOAuthResult);
+  }, [state.bootstrap?.organization.id]);
+
+  useEffect(() => {
+    function refreshPublishingOnReturn() {
+      if (document.visibilityState !== "visible") return;
+      void commonActions.refreshPublishingConnections();
+    }
+
+    window.addEventListener("focus", refreshPublishingOnReturn);
+    document.addEventListener("visibilitychange", refreshPublishingOnReturn);
+    return () => {
+      window.removeEventListener("focus", refreshPublishingOnReturn);
+      document.removeEventListener("visibilitychange", refreshPublishingOnReturn);
+    };
+  }, [state.bootstrap?.organization.id]);
 
   if (state.authRequired && !state.bootstrap) {
     return {
@@ -62,6 +115,7 @@ export function useQuainyWorkspaceController(): QuainyWorkspaceController {
     selectedDraft: state.selectedDraft,
     busy: state.busy,
     linkedinIntegration: state.linkedinIntegration,
+    publishingConnections: state.publishingConnections,
     jobs: state.jobs,
     drafts: state.drafts,
     memoryItems: state.memoryItems,
@@ -165,6 +219,7 @@ export function useQuainyWorkspaceController(): QuainyWorkspaceController {
       setupErrors: state.setupErrors,
       setupSection: state.setupSection,
       linkedinIntegration: state.linkedinIntegration,
+      publishingConnections: state.publishingConnections,
       aiProviderSettings: state.aiProviderSettings,
       aiProviderDraft: state.aiProviderDraft,
       aiProviderTest: state.aiProviderTest,
@@ -196,6 +251,7 @@ export function useQuainyWorkspaceController(): QuainyWorkspaceController {
       opportunityMessage: state.opportunityMessage,
       selectedBrief: state.selectedBrief,
       studioSectionRequest: state.studioSectionRequest,
+      redditCommunity: state.redditCommunity,
       formatChoice: state.formatChoice,
       drafts: state.drafts,
       selectedDraft: state.selectedDraft,
@@ -262,6 +318,7 @@ export function useQuainyWorkspaceController(): QuainyWorkspaceController {
       onOpenLibraryArtifact: studioActions.openLibraryArtifact,
       onShowMoreOpportunities: () => state.setVisibleOpportunityCount((current) => current + 12),
       onSelectContentFormat: studioActions.selectContentFormat,
+      onRedditCommunityChange: state.setRedditCommunity,
       onGenerateDraftsFromBrief: studioActions.generateDraftsFromBrief,
       onEditedBodyChange: state.setEditedBody,
       onReviewReasonChange: state.setReviewReason,

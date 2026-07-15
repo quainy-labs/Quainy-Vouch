@@ -156,6 +156,17 @@ class PreferenceSuggestionKind(str, Enum):
     memory_update = "memory_update"
 
 
+class PublishingProvider(str, Enum):
+    linkedin = "linkedin"
+    reddit = "reddit"
+    instagram = "instagram"
+
+
+class LinkedInPublishTarget(str, Enum):
+    company_page = "company_page"
+    personal_profile = "personal_profile"
+
+
 class JobStatus(str, Enum):
     queued = "queued"
     running = "running"
@@ -789,9 +800,50 @@ class LinkedInIntegration(LinkedInIntegrationUpdate):
     updated_at: datetime = Field(default_factory=now_utc)
 
 
+class PublishingConnection(BaseModel):
+    organization_id: str
+    provider: PublishingProvider
+    oauth_status: str = "not_connected"
+    scopes: list[str] = Field(default_factory=list)
+    access_token: str | None = Field(default=None, exclude=True)
+    refresh_token: str | None = Field(default=None, exclude=True)
+    token_type: str | None = None
+    expires_at: datetime | None = None
+    account_id: str | None = None
+    account_name: str | None = None
+    selected_target_id: str | None = None
+    selected_target_name: str | None = None
+    selected_target_type: str | None = None
+    publishing_enabled: bool = False
+    updated_at: datetime = Field(default_factory=now_utc)
+
+    @computed_field
+    @property
+    def access_token_configured(self) -> bool:
+        return bool(self.access_token)
+
+    @computed_field
+    @property
+    def refresh_token_configured(self) -> bool:
+        return bool(self.refresh_token)
+
+
+class PublishingOAuthStart(BaseModel):
+    provider: str
+    authorization_url: str
+
+
+class PublishingOAuthCallback(BaseModel):
+    provider: PublishingProvider
+    status: str
+    message: str
+    connection: PublishingConnection
+
+
 class AIProviderKind(str, Enum):
     deterministic = "deterministic"
     openai = "openai"
+    gemini = "gemini"
     openai_compatible = "openai_compatible"
     local = "local"
 
@@ -809,12 +861,21 @@ class AIProviderSettingsUpdate(BaseModel):
     generation_model: str = "deterministic-structured-v1"
     generation_base_url: str | None = None
     generation_api_key_env_var: str | None = None
+    generation_local_runtime: AIProviderRuntime = AIProviderRuntime.none
     embedding_provider: AIProviderKind = AIProviderKind.deterministic
     embedding_model: str = "local-hash"
     embedding_base_url: str | None = None
     embedding_api_key_env_var: str | None = None
-    local_runtime: AIProviderRuntime = AIProviderRuntime.none
+    embedding_local_runtime: AIProviderRuntime = AIProviderRuntime.none
     enabled: bool = True
+
+    @model_validator(mode="before")
+    @classmethod
+    def map_legacy_local_runtime(cls, data: Any) -> Any:
+        if isinstance(data, dict) and data.get("local_runtime"):
+            data.setdefault("generation_local_runtime", data["local_runtime"])
+            data.setdefault("embedding_local_runtime", data["local_runtime"])
+        return data
 
     @field_validator(
         "generation_model",
@@ -843,13 +904,17 @@ class AIProviderSettingsUpdate(BaseModel):
     @model_validator(mode="after")
     def validate_provider_requirements(self) -> AIProviderSettingsUpdate:
         if self.generation_provider in {AIProviderKind.openai_compatible, AIProviderKind.local} and not self.generation_base_url:
-            raise ValueError("Generation base URL is required for OpenAI-compatible or local providers")
+            raise ValueError("Generation base URL is required for cloud LLM or local runtime providers")
         if self.embedding_provider in {AIProviderKind.openai_compatible, AIProviderKind.local} and not self.embedding_base_url:
-            raise ValueError("Embedding base URL is required for OpenAI-compatible or local providers")
+            raise ValueError("Embedding base URL is required for cloud LLM or local runtime providers")
         if self.generation_provider == AIProviderKind.openai and not self.generation_api_key_env_var:
             self.generation_api_key_env_var = "OPENAI_API_KEY"
+        if self.generation_provider == AIProviderKind.gemini and not self.generation_api_key_env_var:
+            self.generation_api_key_env_var = "GEMINI_API_KEY"
         if self.embedding_provider == AIProviderKind.openai and not self.embedding_api_key_env_var:
             self.embedding_api_key_env_var = "OPENAI_API_KEY"
+        if self.embedding_provider == AIProviderKind.gemini:
+            raise ValueError("Gemini embedding is not supported yet. Use deterministic, local, or OpenAI-compatible embeddings.")
         return self
 
 
@@ -861,12 +926,20 @@ class AIProviderSettings(AIProviderSettingsUpdate):
     updated_by: str | None = None
 
 
-class AIProviderConnectionTest(BaseModel):
-    organization_id: str
+class AIProviderConnectionCheck(BaseModel):
+    kind: str
     provider: str
     model: str
     status: str
     message: str
+
+
+class AIProviderConnectionTest(BaseModel):
+    organization_id: str
+    status: str
+    message: str
+    generation: AIProviderConnectionCheck
+    embedding: AIProviderConnectionCheck
     checked_at: datetime = Field(default_factory=now_utc)
 
 

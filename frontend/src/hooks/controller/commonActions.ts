@@ -25,6 +25,7 @@ import type {
   Opportunity,
   PostMemory,
   PreferenceSuggestion,
+  PublishingConnection,
   StrategyDashboard,
   TrendSignal,
   WorkspaceUser,
@@ -67,6 +68,7 @@ export function createCommonActions(state: WorkspaceControllerState) {
     await Promise.allSettled([
       api<Draft[]>(`/organizations/${organizationId}/calendar`).then(state.setCalendarItems),
       api<LinkedInIntegration>(`/organizations/${organizationId}/linkedin-integration`).then(state.setLinkedinIntegration),
+      api<PublishingConnection[]>(`/organizations/${organizationId}/publishing-connections`).then(state.setPublishingConnections),
       api<KnowledgeReadiness>(`/organizations/${organizationId}/knowledge-readiness`).then(state.setKnowledgeReadiness),
       api<PostMemory[]>(`/organizations/${organizationId}/memory`).then((memory) => {
         state.setMemoryItems(memory);
@@ -91,6 +93,11 @@ export function createCommonActions(state: WorkspaceControllerState) {
       api<CalendarEvent[]>(`/organizations/${organizationId}/calendar-events`).then(state.setCalendarEvents),
       api<TrendSignal[]>(`/organizations/${organizationId}/trend-signals`).then(state.setTrendSignals),
     ]);
+  }
+
+  async function refreshPublishingConnections(organizationId = state.bootstrap?.organization.id) {
+    if (!organizationId) return;
+    state.setPublishingConnections(await api<PublishingConnection[]>(`/organizations/${organizationId}/publishing-connections`));
   }
 
   async function restoreStudioSelection(organizationId: string) {
@@ -274,6 +281,7 @@ export function createCommonActions(state: WorkspaceControllerState) {
     signOut,
     refreshProductSurfaces,
     refreshKnowledgeReadiness,
+    refreshPublishingConnections,
     refreshJobs,
     refreshCurrentWorkspaceState,
     requirePermission,

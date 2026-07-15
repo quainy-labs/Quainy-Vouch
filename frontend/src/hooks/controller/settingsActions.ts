@@ -246,7 +246,7 @@ export function createSettingsActions(state: WorkspaceControllerState, options: 
         method: "POST",
       });
       state.setAiProviderTest(result);
-      state.setNotice(result.message);
+      state.setNotice("");
     } catch (error) {
       state.setNotice(error instanceof Error ? error.message : "AI provider test failed.");
     } finally {

@@ -45,6 +45,8 @@ from app.schemas import (
     PostMemory,
     PreferenceSuggestion,
     PreferenceSuggestionDecision,
+    PublishingConnection,
+    PublishingProvider,
     PublishResult,
     ReviewDecisionCreate,
     SignupCreate,
@@ -315,6 +317,17 @@ class PostgresDataStore(DataStore):
         self._persist_linkedin_integration(integration)
         return integration
 
+    def upsert_publishing_connection(
+        self,
+        connection: PublishingConnection,
+        actor_id: str = "local_user",
+    ) -> PublishingConnection:
+        saved = super().upsert_publishing_connection(connection, actor_id)
+        self._persist_publishing_connection(saved)
+        if saved.provider == PublishingProvider.linkedin:
+            self._persist_linkedin_integration(self.get_linkedin_integration(saved.organization_id))
+        return saved
+
     def generate_opportunities(self, organization_id: str, actor_id: str = "local_user") -> list[ContentOpportunity]:
         opportunities = super().generate_opportunities(organization_id, actor_id)
         for opportunity in opportunities:
@@ -358,8 +371,10 @@ class PostgresDataStore(DataStore):
         platform: str = "linkedin",
         content_type: str = "company_post",
         actor_id: str = "local_user",
+        reddit_community: str = "",
+        reddit_rules: str = "",
     ) -> list[Draft]:
-        drafts = super().generate_drafts(brief_id, platform, content_type, actor_id)
+        drafts = super().generate_drafts(brief_id, platform, content_type, actor_id, reddit_community, reddit_rules)
         for draft in drafts:
             self._persist_draft(draft)
         return drafts
@@ -529,6 +544,7 @@ class PostgresDataStore(DataStore):
         self._load_memory()
         self._load_preference_suggestions()
         self._load_linkedin_integrations()
+        self._load_publishing_connections()
         self._load_audit_logs()
         self._load_jobs()
         self._load_job_logs()
@@ -572,17 +588,20 @@ class PostgresDataStore(DataStore):
         with self._connect() as connection:
             rows = connection.execute("SELECT * FROM ai_provider_settings").fetchall()
         for row in rows:
+            row_data = dict(row)
+            legacy_local_runtime = row_data.get("local_runtime", "none")
             settings = AIProviderSettings(
                 organization_id=row["organization_id"],
                 generation_provider=row["generation_provider"],
                 generation_model=row["generation_model"],
                 generation_base_url=row["generation_base_url"],
                 generation_api_key_env_var=row["generation_api_key_env_var"],
+                generation_local_runtime=row_data.get("generation_local_runtime") or legacy_local_runtime,
                 embedding_provider=row["embedding_provider"],
                 embedding_model=row["embedding_model"],
                 embedding_base_url=row["embedding_base_url"],
                 embedding_api_key_env_var=row["embedding_api_key_env_var"],
-                local_runtime=row["local_runtime"],
+                embedding_local_runtime=row_data.get("embedding_local_runtime") or legacy_local_runtime,
                 enabled=row["enabled"],
                 generation_api_key_configured=bool(row["generation_api_key_env_var"]),
                 embedding_api_key_configured=bool(row["embedding_api_key_env_var"]),
@@ -872,6 +891,29 @@ class PostgresDataStore(DataStore):
             )
             self.linkedin_integrations[integration.organization_id] = integration
 
+    def _load_publishing_connections(self) -> None:
+        with self._connect() as connection:
+            rows = connection.execute("SELECT * FROM publishing_connections").fetchall()
+        for row in rows:
+            connection = PublishingConnection(
+                organization_id=row["organization_id"],
+                provider=PublishingProvider(row["provider"]),
+                oauth_status=row["oauth_status"],
+                scopes=row["scopes"] or [],
+                access_token=row["access_token"],
+                refresh_token=row["refresh_token"],
+                token_type=row["token_type"],
+                expires_at=row["expires_at"],
+                account_id=row["account_id"],
+                account_name=row["account_name"],
+                selected_target_id=row["selected_target_id"],
+                selected_target_name=row["selected_target_name"],
+                selected_target_type=row["selected_target_type"],
+                publishing_enabled=row["publishing_enabled"],
+                updated_at=row["updated_at"],
+            )
+            self.publishing_connections[(connection.organization_id, connection.provider)] = connection
+
     def _load_audit_logs(self) -> None:
         with self._connect() as connection:
             rows = connection.execute("SELECT * FROM audit_logs ORDER BY created_at").fetchall()
@@ -1146,20 +1188,21 @@ class PostgresDataStore(DataStore):
                 """
                 INSERT INTO ai_provider_settings (
                     organization_id, generation_provider, generation_model, generation_base_url,
-                    generation_api_key_env_var, embedding_provider, embedding_model, embedding_base_url,
-                    embedding_api_key_env_var, local_runtime, enabled, updated_at, updated_by
+                    generation_api_key_env_var, generation_local_runtime, embedding_provider, embedding_model,
+                    embedding_base_url, embedding_api_key_env_var, embedding_local_runtime, enabled, updated_at, updated_by
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (organization_id) DO UPDATE SET
                     generation_provider = EXCLUDED.generation_provider,
                     generation_model = EXCLUDED.generation_model,
                     generation_base_url = EXCLUDED.generation_base_url,
                     generation_api_key_env_var = EXCLUDED.generation_api_key_env_var,
+                    generation_local_runtime = EXCLUDED.generation_local_runtime,
                     embedding_provider = EXCLUDED.embedding_provider,
                     embedding_model = EXCLUDED.embedding_model,
                     embedding_base_url = EXCLUDED.embedding_base_url,
                     embedding_api_key_env_var = EXCLUDED.embedding_api_key_env_var,
-                    local_runtime = EXCLUDED.local_runtime,
+                    embedding_local_runtime = EXCLUDED.embedding_local_runtime,
                     enabled = EXCLUDED.enabled,
                     updated_at = EXCLUDED.updated_at,
                     updated_by = EXCLUDED.updated_by
@@ -1170,11 +1213,12 @@ class PostgresDataStore(DataStore):
                     settings.generation_model,
                     settings.generation_base_url,
                     settings.generation_api_key_env_var,
+                    settings.generation_local_runtime.value,
                     settings.embedding_provider.value,
                     settings.embedding_model,
                     settings.embedding_base_url,
                     settings.embedding_api_key_env_var,
-                    settings.local_runtime.value,
+                    settings.embedding_local_runtime.value,
                     settings.enabled,
                     settings.updated_at,
                     settings.updated_by,
@@ -1382,6 +1426,50 @@ class PostgresDataStore(DataStore):
                     _json(integration.permissions),
                     integration.publishing_enabled,
                     integration.updated_at,
+                ),
+            )
+
+    def _persist_publishing_connection(self, publishing_connection: PublishingConnection) -> None:
+        with self._connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO publishing_connections (
+                    organization_id, provider, oauth_status, scopes, access_token, refresh_token,
+                    token_type, expires_at, account_id, account_name, selected_target_id,
+                    selected_target_name, selected_target_type, publishing_enabled, updated_at
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (organization_id, provider) DO UPDATE SET
+                    oauth_status = EXCLUDED.oauth_status,
+                    scopes = EXCLUDED.scopes,
+                    access_token = EXCLUDED.access_token,
+                    refresh_token = EXCLUDED.refresh_token,
+                    token_type = EXCLUDED.token_type,
+                    expires_at = EXCLUDED.expires_at,
+                    account_id = EXCLUDED.account_id,
+                    account_name = EXCLUDED.account_name,
+                    selected_target_id = EXCLUDED.selected_target_id,
+                    selected_target_name = EXCLUDED.selected_target_name,
+                    selected_target_type = EXCLUDED.selected_target_type,
+                    publishing_enabled = EXCLUDED.publishing_enabled,
+                    updated_at = EXCLUDED.updated_at
+                """,
+                (
+                    publishing_connection.organization_id,
+                    publishing_connection.provider.value,
+                    publishing_connection.oauth_status,
+                    _json(publishing_connection.scopes),
+                    publishing_connection.access_token,
+                    publishing_connection.refresh_token,
+                    publishing_connection.token_type,
+                    publishing_connection.expires_at,
+                    publishing_connection.account_id,
+                    publishing_connection.account_name,
+                    publishing_connection.selected_target_id,
+                    publishing_connection.selected_target_name,
+                    publishing_connection.selected_target_type,
+                    publishing_connection.publishing_enabled,
+                    publishing_connection.updated_at,
                 ),
             )
 

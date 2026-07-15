@@ -4,10 +4,64 @@ import hashlib
 import json
 import math
 import os
+import urllib.error
+import urllib.parse
+import urllib.request
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from app.intelligence import terms
+
+
+DOTENV_PATH = Path(__file__).resolve().parents[2] / ".env"
+
+
+def resolve_secret_reference(name: str | None) -> str | None:
+    if not name:
+        return None
+    key = name.strip()
+    if not key:
+        return None
+    value = os.getenv(key)
+    if value:
+        return value
+    return dotenv_value(key)
+
+
+def dotenv_value(name: str, env_path: Path | None = None) -> str | None:
+    path = env_path or DOTENV_PATH
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return None
+    for line in lines:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if stripped.startswith("export "):
+            stripped = stripped[len("export ") :].strip()
+        key, separator, raw_value = stripped.partition("=")
+        if separator and key.strip() == name:
+            return clean_dotenv_value(raw_value)
+    return None
+
+
+def clean_dotenv_value(raw_value: str) -> str:
+    value = raw_value.strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
+        return value[1:-1]
+    return value
+
+
+def _provider_error_message(prefix: str, error: Exception) -> str:
+    detail = getattr(error, "message", None) or str(error)
+    status_code = getattr(error, "status_code", None)
+    if status_code and detail:
+        return f"{prefix} Provider returned {status_code}: {detail}"
+    if detail:
+        return f"{prefix} Provider error: {detail}"
+    return prefix
 
 
 @dataclass(frozen=True)
@@ -52,7 +106,7 @@ class OpenAIEmbeddingProvider:
         base_url: str | None = None,
         provider_name: str | None = None,
     ) -> None:
-        self.api_key = api_key or os.getenv("OPENAI_API_KEY")
+        self.api_key = api_key or resolve_secret_reference("OPENAI_API_KEY")
         self.model = model or os.getenv("OPENAI_EMBEDDING_MODEL", "text-embedding-3-small")
         self.base_url = base_url
         if provider_name:
@@ -104,7 +158,7 @@ class OpenAIModelProvider:
         base_url: str | None = None,
         provider_name: str | None = None,
     ) -> None:
-        self.api_key = api_key or os.getenv("OPENAI_API_KEY")
+        self.api_key = api_key or resolve_secret_reference("OPENAI_API_KEY")
         self.model = model or os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
         self.base_url = base_url
         if provider_name:
@@ -127,14 +181,9 @@ class OpenAIModelProvider:
         if self.base_url:
             client_kwargs["base_url"] = self.base_url
         client = OpenAI(**client_kwargs)
-        text_format = {"type": "json_object"}
-        if json_schema:
-            text_format = {
-                "type": "json_schema",
-                "name": schema_name,
-                "schema": json_schema,
-                "strict": True,
-            }
+        if self.provider_name != "openai":
+            return self._generate_chat_completion(client, prompt, schema_name, json_schema)
+        text_format = self._responses_text_format(schema_name, json_schema)
         try:
             response = client.responses.create(
                 model=self.model,
@@ -142,7 +191,7 @@ class OpenAIModelProvider:
                 text={"format": text_format},
             )
         except Exception as error:
-            raise RuntimeError("Model provider request failed. Check provider credentials and runtime availability.") from error
+            raise RuntimeError(_provider_error_message("Model provider request failed. Check provider credentials and runtime availability.", error)) from error
         try:
             output = json.loads(response.output_text)
         except json.JSONDecodeError as error:
@@ -162,6 +211,179 @@ class OpenAIModelProvider:
             raw_metadata={"response_id": getattr(response, "id", None)},
         )
 
+    def _generate_chat_completion(
+        self,
+        client: Any,
+        prompt: str,
+        schema_name: str,
+        json_schema: dict[str, Any] | None,
+    ) -> ModelProviderResult:
+        try:
+            response = client.chat.completions.create(
+                model=self.model,
+                messages=[{"role": "user", "content": prompt}],
+                response_format=self._chat_response_format(schema_name, json_schema),
+            )
+        except Exception as error:
+            raise RuntimeError(_provider_error_message("Model provider request failed. Check provider credentials and runtime availability.", error)) from error
+        content = response.choices[0].message.content if response.choices else ""
+        try:
+            output = json.loads(content or "{}")
+        except json.JSONDecodeError as error:
+            raise RuntimeError(f"OpenAI-compatible response was not valid JSON for schema {schema_name}.") from error
+        usage = getattr(response, "usage", None)
+        token_usage: dict[str, int] = {}
+        if usage:
+            for source_key, target_key in (
+                ("prompt_tokens", "input_tokens"),
+                ("completion_tokens", "output_tokens"),
+                ("total_tokens", "total_tokens"),
+            ):
+                value = getattr(usage, source_key, None)
+                if value is not None:
+                    token_usage[target_key] = int(value)
+        return ModelProviderResult(
+            provider=self.provider_name,
+            model=self.model,
+            output=output,
+            token_usage=token_usage,
+            raw_metadata={"response_id": getattr(response, "id", None)},
+        )
+
+    def _responses_text_format(self, schema_name: str, json_schema: dict[str, Any] | None) -> dict[str, Any]:
+        if not json_schema:
+            return {"type": "json_object"}
+        return {
+            "type": "json_schema",
+            "name": schema_name,
+            "schema": json_schema,
+            "strict": True,
+        }
+
+    def _chat_response_format(self, schema_name: str, json_schema: dict[str, Any] | None) -> dict[str, Any]:
+        if not json_schema:
+            return {"type": "json_object"}
+        return {
+            "type": "json_schema",
+            "json_schema": {
+                "name": schema_name,
+                "schema": json_schema,
+                "strict": True,
+            },
+        }
+
+
+class GeminiModelProvider:
+    provider_name = "gemini"
+
+    def __init__(
+        self,
+        api_key: str | None = None,
+        model: str | None = None,
+        base_url: str | None = None,
+    ) -> None:
+        self.api_key = api_key or resolve_secret_reference("GEMINI_API_KEY")
+        self.model = model or os.getenv("GEMINI_MODEL") or dotenv_value("GEMINI_MODEL") or "gemini-2.5-flash"
+        self.base_url = (
+            base_url
+            or os.getenv("GEMINI_BASE_URL")
+            or dotenv_value("GEMINI_BASE_URL")
+            or "https://generativelanguage.googleapis.com/v1beta"
+        ).rstrip("/")
+
+    def generate_structured(
+        self,
+        prompt: str,
+        schema_name: str,
+        json_schema: dict[str, Any] | None = None,
+    ) -> ModelProviderResult:
+        if not self.api_key:
+            raise RuntimeError("An API key is required for the selected model provider.")
+        instruction = self._structured_prompt(prompt, schema_name, json_schema)
+        endpoint = (
+            f"{self.base_url}/models/{urllib.parse.quote(self.model, safe='')}:generateContent"
+            f"?key={urllib.parse.quote(self.api_key, safe='')}"
+        )
+        payload = {
+            "contents": [{"role": "user", "parts": [{"text": instruction}]}],
+            "generationConfig": {"responseMimeType": "application/json"},
+        }
+        request = urllib.request.Request(
+            endpoint,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=90) as response:
+                response_body = response.read().decode("utf-8")
+        except TimeoutError as error:
+            raise RuntimeError(
+                "Model provider request failed. Check provider credentials and runtime availability. Provider error: request timed out."
+            ) from error
+        except urllib.error.HTTPError as error:
+            detail = self._http_error_detail(error)
+            raise RuntimeError(
+                f"Model provider request failed. Check provider credentials and runtime availability. Provider returned {error.code}: {detail}"
+            ) from error
+        except urllib.error.URLError as error:
+            raise RuntimeError(
+                f"Model provider request failed. Check provider credentials and runtime availability. Provider error: {error.reason}"
+            ) from error
+        try:
+            decoded = json.loads(response_body)
+            content = self._extract_text(decoded)
+            output = json.loads(content or "{}")
+        except (KeyError, TypeError, json.JSONDecodeError) as error:
+            raise RuntimeError(f"Gemini response was not valid JSON for schema {schema_name}.") from error
+        usage = decoded.get("usageMetadata", {}) if isinstance(decoded, dict) else {}
+        token_usage: dict[str, int] = {}
+        for source_key, target_key in (
+            ("promptTokenCount", "input_tokens"),
+            ("candidatesTokenCount", "output_tokens"),
+            ("totalTokenCount", "total_tokens"),
+        ):
+            value = usage.get(source_key)
+            if value is not None:
+                token_usage[target_key] = int(value)
+        return ModelProviderResult(
+            provider=self.provider_name,
+            model=self.model,
+            output=output,
+            token_usage=token_usage,
+            raw_metadata={"candidate_count": len(decoded.get("candidates", [])) if isinstance(decoded, dict) else 0},
+        )
+
+    def _structured_prompt(self, prompt: str, schema_name: str, json_schema: dict[str, Any] | None) -> str:
+        schema_text = json.dumps(json_schema or {}, separators=(",", ":"))
+        return (
+            f"{prompt}\n\n"
+            f"Return only valid JSON for schema {schema_name}. Do not include markdown fences or commentary.\n"
+            f"JSON schema: {schema_text}"
+        )
+
+    def _extract_text(self, response: dict[str, Any]) -> str:
+        candidates = response.get("candidates") or []
+        if not candidates:
+            return ""
+        parts = candidates[0].get("content", {}).get("parts", [])
+        return "".join(str(part.get("text", "")) for part in parts)
+
+    def _http_error_detail(self, error: urllib.error.HTTPError) -> str:
+        try:
+            body = error.read().decode("utf-8")
+        except Exception:
+            return str(error)
+        try:
+            decoded = json.loads(body)
+        except json.JSONDecodeError:
+            return body
+        if isinstance(decoded, dict):
+            provider_error = decoded.get("error")
+            if isinstance(provider_error, dict):
+                return str(provider_error.get("message") or provider_error)
+        return str(decoded)
+
 
 def build_model_provider(
     name: str | None = None,
@@ -170,14 +392,20 @@ def build_model_provider(
     base_url: str | None = None,
     api_key: str | None = None,
 ):
-    provider_name = (name or os.getenv("QUAINY_MODEL_PROVIDER", "deterministic")).strip().lower()
+    provider_name = (name or os.getenv("VOUCH_MODEL_PROVIDER") or os.getenv("QUAINY_MODEL_PROVIDER", "deterministic")).strip().lower()
     if provider_name in {"deterministic", "mock"}:
         return DeterministicModelProvider()
     if provider_name == "openai":
         return OpenAIModelProvider(api_key=api_key, model=model, base_url=base_url)
+    if provider_name in {"gemini", "google", "google_gemini", "google-gemini"}:
+        return GeminiModelProvider(
+            api_key=api_key or resolve_secret_reference("GEMINI_API_KEY"),
+            model=model,
+            base_url=base_url,
+        )
     if provider_name in {"openai_compatible", "openai-compatible", "compatible"}:
         return OpenAIModelProvider(
-            api_key=api_key or os.getenv("OPENAI_COMPATIBLE_API_KEY"),
+            api_key=api_key or resolve_secret_reference("OPENAI_COMPATIBLE_API_KEY"),
             model=model or os.getenv("OPENAI_COMPATIBLE_MODEL", "gpt-4.1-mini"),
             base_url=base_url or os.getenv("OPENAI_COMPATIBLE_BASE_URL"),
             provider_name="openai_compatible",
@@ -240,14 +468,14 @@ def build_embedding_provider(
     base_url: str | None = None,
     api_key: str | None = None,
 ):
-    provider_name = (name or os.getenv("QUAINY_EMBEDDING_PROVIDER", "local_hash")).strip().lower()
+    provider_name = (name or os.getenv("VOUCH_EMBEDDING_PROVIDER") or os.getenv("QUAINY_EMBEDDING_PROVIDER", "local_hash")).strip().lower()
     if provider_name in {"local_hash", "local-hash", "deterministic"}:
         return LocalHashEmbeddingProvider()
     if provider_name == "openai":
         return OpenAIEmbeddingProvider(api_key=api_key, model=model, base_url=base_url)
     if provider_name in {"openai_compatible", "openai-compatible", "compatible"}:
         return OpenAIEmbeddingProvider(
-            api_key=api_key or os.getenv("OPENAI_COMPATIBLE_API_KEY"),
+            api_key=api_key or resolve_secret_reference("OPENAI_COMPATIBLE_API_KEY"),
             model=model or os.getenv("OPENAI_COMPATIBLE_EMBEDDING_MODEL", "text-embedding-3-small"),
             base_url=base_url or os.getenv("OPENAI_COMPATIBLE_BASE_URL"),
             provider_name="openai_compatible",

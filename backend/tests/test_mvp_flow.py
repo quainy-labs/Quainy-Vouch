@@ -48,7 +48,9 @@ def test_same_brief_generates_supported_social_posts():
     brief = client.post(f"/opportunities/{opportunity['id']}/briefs").json()
 
     linkedin = client.post(f"/briefs/{brief['id']}/drafts?platform=linkedin&content_type=company_post").json()["drafts"][0]
-    reddit = client.post(f"/briefs/{brief['id']}/drafts?platform=reddit&content_type=post").json()["drafts"][0]
+    reddit = client.post(
+        f"/briefs/{brief['id']}/drafts?platform=reddit&content_type=post&reddit_community=r%2Flearnpython",
+    ).json()["drafts"][0]
     instagram = client.post(f"/briefs/{brief['id']}/drafts?platform=instagram&content_type=post").json()["drafts"][0]
     listed_drafts = client.get(f"/briefs/{brief['id']}/drafts").json()
 
@@ -63,6 +65,13 @@ def test_same_brief_generates_supported_social_posts():
     assert reddit["content_type"] == "post"
     assert instagram["content_type"] == "post"
     assert reddit["generation_metadata"]["prompt_version"] == "reddit_post.v1"
+    assert reddit["generation_metadata"]["metadata"]["target_community"] == "r/learnpython"
+    assert reddit["generation_metadata"]["metadata"]["community_rules"] == [
+        "Follow r/learnpython rules and posting norms",
+        "Avoid self-promotion unless the community explicitly allows it",
+        "Keep the post useful, specific, and discussion-oriented",
+    ]
+    assert "r/learnpython" in reddit["body"]
     assert "Subreddit fit:" not in reddit["body"]
     assert "Title:" not in reddit["body"]
     assert reddit["body"].count("?") >= 1

@@ -176,6 +176,29 @@ export type LinkedInIntegration = {
   updated_at: string;
 };
 
+export type PublishingOAuthStart = {
+  provider: "linkedin" | "reddit" | "instagram";
+  authorization_url: string;
+};
+
+export type PublishingConnection = {
+  organization_id: string;
+  provider: "linkedin" | "reddit" | "instagram";
+  oauth_status: string;
+  scopes: string[];
+  token_type?: string | null;
+  expires_at?: string | null;
+  account_id?: string | null;
+  account_name?: string | null;
+  selected_target_id?: string | null;
+  selected_target_name?: string | null;
+  selected_target_type?: string | null;
+  publishing_enabled: boolean;
+  access_token_configured: boolean;
+  refresh_token_configured: boolean;
+  updated_at: string;
+};
+
 export type PublishResult = {
   provider: string;
   status: string;
@@ -328,8 +351,9 @@ export type ApprovalPolicyForm = {
   allow_risk_override: boolean;
 };
 
-export type AIProviderKind = "deterministic" | "openai" | "openai_compatible" | "local";
+export type AIProviderKind = "deterministic" | "openai" | "gemini" | "openai_compatible" | "local";
 export type AIProviderRuntime = "none" | "ollama" | "vllm" | "lm_studio" | "custom";
+export type AICloudService = "openai" | "grok" | "claude" | "gemini" | "other";
 
 export type AIProviderSettings = {
   organization_id: string;
@@ -337,37 +361,49 @@ export type AIProviderSettings = {
   generation_model: string;
   generation_base_url?: string | null;
   generation_api_key_env_var?: string | null;
+  generation_local_runtime: AIProviderRuntime;
   generation_api_key_configured: boolean;
   embedding_provider: AIProviderKind;
   embedding_model: string;
   embedding_base_url?: string | null;
   embedding_api_key_env_var?: string | null;
+  embedding_local_runtime: AIProviderRuntime;
   embedding_api_key_configured: boolean;
-  local_runtime: AIProviderRuntime;
   enabled: boolean;
   updated_at: string;
   updated_by?: string | null;
 };
 
-export type AIProviderConnectionTest = {
-  organization_id: string;
+export type AIProviderConnectionCheck = {
+  kind: "generation" | "embedding";
   provider: string;
   model: string;
   status: "succeeded" | "failed";
   message: string;
+};
+
+export type AIProviderConnectionTest = {
+  organization_id: string;
+  status: "succeeded" | "failed";
+  message: string;
+  generation: AIProviderConnectionCheck;
+  embedding: AIProviderConnectionCheck;
   checked_at: string;
 };
 
 export type AIProviderSettingsForm = {
   generation_provider: AIProviderKind;
+  generation_cloud_service: AICloudService;
   generation_model: string;
   generation_base_url: string;
   generation_api_key_env_var: string;
+  generation_local_runtime: AIProviderRuntime;
   embedding_provider: AIProviderKind;
+  embedding_cloud_service: AICloudService;
   embedding_model: string;
   embedding_base_url: string;
   embedding_api_key_env_var: string;
-  local_runtime: AIProviderRuntime;
+  embedding_local_runtime: AIProviderRuntime;
   enabled: boolean;
 };
 

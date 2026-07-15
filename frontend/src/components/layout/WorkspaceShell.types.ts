@@ -22,6 +22,7 @@ import type {
   Opportunity,
   PostMemory,
   PreferenceSuggestion,
+  PublishingConnection,
   ReviewerPackage,
   SetupForm,
   SetupSection,
@@ -81,6 +82,7 @@ export type WorkspaceShellProps = {
   setupErrors: string[];
   setupSection: SetupSection;
   linkedinIntegration: LinkedInIntegration | null;
+  publishingConnections: PublishingConnection[];
   aiProviderSettings: AIProviderSettings | null;
   aiProviderDraft: AIProviderSettingsForm | null;
   aiProviderTest: AIProviderConnectionTest | null;
@@ -112,6 +114,7 @@ export type WorkspaceShellProps = {
   opportunityMessage: string;
   selectedBrief: ContentBrief | null;
   studioSectionRequest: { section: StudioSection; requestedAt: number } | null;
+  redditCommunity: string;
   formatChoice: FormatChoice;
   drafts: Draft[];
   selectedDraft: Draft | null;
@@ -172,6 +175,7 @@ export type WorkspaceShellProps = {
   onOpenLibraryArtifact: (artifact: ContentArtifact) => void | Promise<void>;
   onShowMoreOpportunities: () => void;
   onSelectContentFormat: (choice: FormatChoice) => void;
+  onRedditCommunityChange: (value: string) => void;
   onGenerateDraftsFromBrief: () => void | Promise<void>;
   onEditedBodyChange: (body: string) => void;
   onReviewReasonChange: (reason: string) => void;

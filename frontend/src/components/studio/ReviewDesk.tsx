@@ -1,5 +1,6 @@
 import { CalendarClock, Check, Clipboard, RefreshCcw, Save, Send, ShieldCheck, X } from "lucide-react";
 import type { ApprovalPolicy, Draft, LinkedInIntegration, ReviewerPackage } from "../../types";
+import { draftFormatLabel } from "../../lib/forms";
 import { InsightList } from "../ui/InsightList";
 
 type ReviewDeskProps = {
@@ -202,7 +203,7 @@ export function ReviewDesk({
             <section className="review-action-card schedule-card">
               <div>
                 <span>Schedule intent</span>
-                <p>Save this artifact to the internal calendar for planning. This does not publish to Reddit, Instagram, or unsupported channels.</p>
+                <p>Save this {draftFormatLabel(draft).toLowerCase()} to the internal calendar for planning. This does not publish to Reddit, Instagram, or unsupported channels.</p>
               </div>
               <div className="schedule-row">
                 <input

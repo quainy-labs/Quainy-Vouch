@@ -16,7 +16,7 @@ export function TrustTimelinePanel({ items }: TrustTimelinePanelProps) {
       <div className="section-heading">
         <div>
           <p className="eyebrow">Trust History</p>
-          <h2>Why this artifact is reviewable</h2>
+          <h2>Why this post is reviewable</h2>
         </div>
         <span className="platform-count">{items.length} signals</span>
       </div>

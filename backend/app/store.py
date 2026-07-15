@@ -30,7 +30,13 @@ from app.intelligence import (
 from app.opportunities import OpportunityGenerator
 from app.preference_learning import PreferenceLearningEngine
 from app.prompt_registry import prompt_versions
-from app.providers import DeterministicModelProvider, build_embedding_provider, build_model_provider, cosine_similarity
+from app.providers import (
+    DeterministicModelProvider,
+    build_embedding_provider,
+    build_model_provider,
+    cosine_similarity,
+    resolve_secret_reference,
+)
 from app.publishing import build_linkedin_publisher
 from app.risk_checks import check_claims, high_risk_unsupported_claims, risk_check
 from app.trends import TrendOpportunityGenerator
@@ -38,6 +44,7 @@ from app.schemas import (
     Account,
     AccountLogin,
     AIProviderConnectionTest,
+    AIProviderConnectionCheck,
     AIProviderKind,
     AIProviderSettings,
     AIProviderSettingsUpdate,
@@ -83,6 +90,8 @@ from app.schemas import (
     PreferenceSuggestion,
     PreferenceSuggestionDecision,
     PreferenceSuggestionStatus,
+    PublishingConnection,
+    PublishingProvider,
     DraftRecommendationSet,
     OpportunityRecommendationSet,
     OpportunityRecommendation,
@@ -160,6 +169,7 @@ class DataStore:
         self.memory: dict[str, PostMemory] = {}
         self.preference_suggestions: dict[str, PreferenceSuggestion] = {}
         self.linkedin_integrations: dict[str, LinkedInIntegration] = {}
+        self.publishing_connections: dict[tuple[str, PublishingProvider], PublishingConnection] = {}
         self.ai_provider_settings: dict[str, AIProviderSettings] = {}
         self.audit_logs: list[AuditLog] = []
         self.jobs: dict[str, BackgroundJob] = {}
@@ -468,9 +478,10 @@ class DataStore:
             {
                 "generation_provider": settings.generation_provider.value,
                 "generation_model": settings.generation_model,
+                "generation_local_runtime": settings.generation_local_runtime.value,
                 "embedding_provider": settings.embedding_provider.value,
                 "embedding_model": settings.embedding_model,
-                "local_runtime": settings.local_runtime.value,
+                "embedding_local_runtime": settings.embedding_local_runtime.value,
                 "enabled": settings.enabled,
                 "generation_api_key_configured": settings.generation_api_key_configured,
                 "embedding_api_key_configured": settings.embedding_api_key_configured,
@@ -487,7 +498,7 @@ class DataStore:
             return self.model_provider
         api_key = None
         if settings.generation_api_key_env_var:
-            api_key = os.getenv(settings.generation_api_key_env_var)
+            api_key = resolve_secret_reference(settings.generation_api_key_env_var)
         return build_model_provider(
             settings.generation_provider.value,
             model=settings.generation_model,
@@ -501,13 +512,17 @@ class DataStore:
             return self.embedding_provider
         api_key = None
         if settings.embedding_api_key_env_var:
-            api_key = os.getenv(settings.embedding_api_key_env_var)
+            api_key = resolve_secret_reference(settings.embedding_api_key_env_var)
         return build_embedding_provider(
             settings.embedding_provider.value,
             model=settings.embedding_model,
             base_url=settings.embedding_base_url,
             api_key=api_key,
         )
+
+    def _requires_live_model_generation(self, organization_id: str) -> bool:
+        settings = self.get_ai_provider_settings(organization_id)
+        return settings.enabled and settings.generation_provider != AIProviderKind.deterministic
 
     def test_ai_provider_settings(
         self,
@@ -516,16 +531,33 @@ class DataStore:
     ) -> AIProviderConnectionTest:
         self.require_role(organization_id, actor_id, {UserRole.owner, UserRole.editor})
         settings = self.get_ai_provider_settings(organization_id)
+        generation = self._test_generation_provider(organization_id, settings)
+        embedding = self._test_embedding_provider(organization_id, settings)
+        status = "succeeded" if generation.status == "succeeded" and embedding.status == "succeeded" else "failed"
+        message = "Generation and embedding checks passed." if status == "succeeded" else "Review the failed AI connection check."
+        return AIProviderConnectionTest(
+            organization_id=organization_id,
+            status=status,
+            message=message,
+            generation=generation,
+            embedding=embedding,
+        )
+
+    def _test_generation_provider(
+        self,
+        organization_id: str,
+        settings: AIProviderSettings,
+    ) -> AIProviderConnectionCheck:
         provider = self.model_provider_for_org(organization_id)
         provider_name = getattr(provider, "provider_name", settings.generation_provider.value)
         provider_model = getattr(provider, "model", settings.generation_model)
         if isinstance(provider, DeterministicModelProvider):
-            return AIProviderConnectionTest(
-                organization_id=organization_id,
+            return AIProviderConnectionCheck(
+                kind="generation",
                 provider=provider_name,
                 model=provider_model,
                 status="succeeded",
-                message="Deterministic structured generation is available.",
+                message="Deterministic generation is available.",
             )
         try:
             provider.generate_structured(
@@ -539,19 +571,53 @@ class DataStore:
                 },
             )
         except Exception as error:
-            return AIProviderConnectionTest(
-                organization_id=organization_id,
+            return AIProviderConnectionCheck(
+                kind="generation",
                 provider=provider_name,
                 model=provider_model,
                 status="failed",
                 message=str(error),
             )
-        return AIProviderConnectionTest(
-            organization_id=organization_id,
+        return AIProviderConnectionCheck(
+            kind="generation",
             provider=provider_name,
             model=provider_model,
             status="succeeded",
-            message="Provider returned a structured response.",
+            message="Generation returned a structured response.",
+        )
+
+    def _test_embedding_provider(
+        self,
+        organization_id: str,
+        settings: AIProviderSettings,
+    ) -> AIProviderConnectionCheck:
+        provider = self.embedding_provider_for_org(organization_id)
+        provider_name = getattr(provider, "provider_name", settings.embedding_provider.value)
+        provider_model = getattr(provider, "model", settings.embedding_model)
+        try:
+            vectors = provider.embed(["Confirm embedding connectivity."])
+        except Exception as error:
+            return AIProviderConnectionCheck(
+                kind="embedding",
+                provider=provider_name,
+                model=provider_model,
+                status="failed",
+                message=str(error),
+            )
+        if not vectors or not vectors[0]:
+            return AIProviderConnectionCheck(
+                kind="embedding",
+                provider=provider_name,
+                model=provider_model,
+                status="failed",
+                message="Embedding provider returned an empty vector.",
+            )
+        return AIProviderConnectionCheck(
+            kind="embedding",
+            provider=provider_name,
+            model=provider_model,
+            status="succeeded",
+            message="Embedding returned a vector.",
         )
 
     def list_users(self, organization_id: str) -> list[User]:
@@ -686,6 +752,8 @@ class DataStore:
             del self.users[key]
         self.approval_policies.pop(organization_id, None)
         self.linkedin_integrations.pop(organization_id, None)
+        for key in [key for key in self.publishing_connections if key[0] == organization_id]:
+            self.publishing_connections.pop(key, None)
         self.ai_provider_settings.pop(organization_id, None)
         for suggestion_id in [item.id for item in self.preference_suggestions.values() if item.organization_id == organization_id]:
             self.preference_suggestions.pop(suggestion_id, None)
@@ -742,6 +810,65 @@ class DataStore:
             actor_id,
         )
         return integration
+
+    def get_publishing_connection(self, organization_id: str, provider: PublishingProvider | str) -> PublishingConnection:
+        self.get_organization(organization_id)
+        provider_value = provider if isinstance(provider, PublishingProvider) else PublishingProvider(provider)
+        key = (organization_id, provider_value)
+        if key not in self.publishing_connections:
+            self.publishing_connections[key] = PublishingConnection(organization_id=organization_id, provider=provider_value)
+        return self.publishing_connections[key]
+
+    def list_publishing_connections(self, organization_id: str) -> list[PublishingConnection]:
+        self.get_organization(organization_id)
+        return [self.get_publishing_connection(organization_id, provider) for provider in PublishingProvider]
+
+    def upsert_publishing_connection(
+        self,
+        connection: PublishingConnection,
+        actor_id: str = "local_user",
+    ) -> PublishingConnection:
+        connection.updated_at = now_utc()
+        self.publishing_connections[(connection.organization_id, connection.provider)] = connection
+        if connection.provider == PublishingProvider.linkedin:
+            self._sync_linkedin_integration_from_connection(connection)
+        self.log(
+            connection.organization_id,
+            "publishing.connection_updated",
+            "publishing_connection",
+            connection.provider.value,
+            {
+                "provider": connection.provider.value,
+                "oauth_status": connection.oauth_status,
+                "scopes": connection.scopes,
+                "account_id": connection.account_id,
+                "selected_target_id": connection.selected_target_id,
+                "selected_target_name": connection.selected_target_name,
+                "selected_target_type": connection.selected_target_type,
+                "publishing_enabled": connection.publishing_enabled,
+                "access_token_configured": connection.access_token_configured,
+                "refresh_token_configured": connection.refresh_token_configured,
+                "expires_at": connection.expires_at.isoformat() if connection.expires_at else None,
+            },
+            actor_id,
+        )
+        return connection
+
+    def _sync_linkedin_integration_from_connection(self, connection: PublishingConnection) -> None:
+        current = self.get_linkedin_integration(connection.organization_id)
+        if connection.selected_target_type and connection.selected_target_type != "company_page":
+            return
+        integration = current.model_copy(
+            update={
+                "selected_page_urn": connection.selected_target_id or current.selected_page_urn,
+                "selected_page_name": connection.selected_target_name or current.selected_page_name,
+                "oauth_status": connection.oauth_status,
+                "permissions": connection.scopes,
+                "publishing_enabled": connection.publishing_enabled,
+                "updated_at": now_utc(),
+            }
+        )
+        self.linkedin_integrations[connection.organization_id] = integration
 
     def create_source(self, organization_id: str, payload: SourceCreate, actor_id: str = "local_user") -> Source:
         self.require_role(organization_id, actor_id, {UserRole.owner, UserRole.editor})
@@ -1062,14 +1189,7 @@ class DataStore:
         profile = self.profiles[organization_id]
         sources = [source for source in self.list_sources(organization_id) if source.approval_status == SourceStatus.approved]
         chunks = self.approved_chunks(organization_id)
-        fallback_opportunities = self.opportunity_generator.generate(
-            profile,
-            sources,
-            chunks,
-            self.list_memory(organization_id),
-            self.list_calendar_events(organization_id),
-            self.list_trend_signals(organization_id),
-        )
+        strict_model_generation = self._requires_live_model_generation(organization_id)
         model_output, model_log = self.generate_structured_safely(
             organization_id,
             actor_id,
@@ -1088,9 +1208,30 @@ class DataStore:
                 chunks,
                 model_log.provider,
             )
-        if model_log.provider != "deterministic" and model_log.status == ModelCallStatus.succeeded:
+        if strict_model_generation:
+            if model_log.status != ModelCallStatus.succeeded or model_log.provider == "deterministic":
+                provider_detail = f" Provider detail: {model_log.error_message}" if model_log.error_message else ""
+                raise RuntimeError(
+                    f"Live model opportunity generation failed for {model_log.provider}. "
+                    f"No deterministic fallback was used.{provider_detail}"
+                )
+            if not model_opportunities:
+                raise RuntimeError(
+                    "Live model returned no source-grounded opportunities after evidence filtering. "
+                    "No deterministic fallback was used. Add more approved source context or regenerate with a more specific profile."
+                )
+            opportunities = model_opportunities
+        elif model_log.provider != "deterministic" and model_log.status == ModelCallStatus.succeeded:
             opportunities = model_opportunities
         else:
+            fallback_opportunities = self.opportunity_generator.generate(
+                profile,
+                sources,
+                chunks,
+                self.list_memory(organization_id),
+                self.list_calendar_events(organization_id),
+                self.list_trend_signals(organization_id),
+            )
             opportunities = self._merge_opportunities(model_opportunities, fallback_opportunities)
         for opportunity in opportunities:
             opportunity.metadata["model_call_id"] = model_log.id
@@ -1121,7 +1262,7 @@ class DataStore:
             if not evidence:
                 continue
             evidence_fit, shared_terms = self._model_recommendation_evidence_fit(recommendation, evidence)
-            if evidence_fit < 0.24 or len(shared_terms) < 3:
+            if evidence_fit < 0.38 or len(shared_terms) < 4:
                 continue
             recommendation_title = self._sanitize_model_title(recommendation.title.strip(), evidence)
             recommendation_summary = recommendation.summary.strip()
@@ -1129,10 +1270,13 @@ class DataStore:
             selected_source_ids = sorted({chunk.source_id for chunk in evidence})
             freshness = self.opportunity_generator.freshness_scorer.score(sources, selected_source_ids)
             timeliness = self._model_timeliness_score(selected_source_ids, sources)
-            relevance = min(0.98, max(0.55, 0.5 + len(evidence) * 0.08 + recommendation.confidence * 0.22))
-            confidence = min(0.97, max(0.55, recommendation.confidence))
+            evidence_strength = min(1.0, evidence_fit * 1.15)
+            relevance = min(0.98, max(0.0, 0.28 + len(evidence) * 0.045 + evidence_strength * 0.42 + recommendation.confidence * 0.14))
+            confidence = min(0.97, max(0.0, recommendation.confidence * 0.72 + evidence_strength * 0.25 + min(len(evidence), 4) * 0.02))
+            if relevance < 0.62 or confidence < 0.62:
+                continue
             focus = self._model_focus_score(recommendation)
-            rank_score = round(min(1.0, relevance * 0.34 + confidence * 0.16 + freshness * 0.18 + timeliness * 0.22 + focus * 0.1), 3)
+            rank_score = round(min(1.0, relevance * 0.3 + confidence * 0.15 + freshness * 0.15 + timeliness * 0.18 + evidence_strength * 0.17 + focus * 0.05), 3)
             opportunities.append(
                 ContentOpportunity(
                     organization_id=organization_id,
@@ -1419,6 +1563,7 @@ class DataStore:
         profile = self.profiles[opportunity.organization_id]
         chunks = self.approved_chunks(opportunity.organization_id)
         brief = build_brief(profile, opportunity, chunks)
+        strict_model_generation = self._requires_live_model_generation(opportunity.organization_id)
         model_output, model_log = self.generate_structured_safely(
             opportunity.organization_id,
             actor_id,
@@ -1428,6 +1573,12 @@ class DataStore:
             opportunity.source_ids,
             {"operation": "brief_builder", "opportunity_id": opportunity.id},
         )
+        if strict_model_generation and (model_log.status != ModelCallStatus.succeeded or model_log.provider == "deterministic" or not model_output):
+            provider_detail = f" Provider detail: {model_log.error_message}" if model_log.error_message else ""
+            raise RuntimeError(
+                f"Live model brief generation failed for {model_log.provider}. "
+                f"No deterministic fallback was used.{provider_detail}"
+            )
         brief.builder_metadata.update(
             {
                 "model_call_id": model_log.id,
@@ -1447,10 +1598,13 @@ class DataStore:
         platform: str = "linkedin",
         content_type: str = "company_post",
         actor_id: str = "local_user",
+        reddit_community: str = "",
+        reddit_rules: str = "",
     ) -> list[Draft]:
         brief = self.get_brief(brief_id)
         opportunity = self.get_opportunity(brief.opportunity_id)
-        adapter = self.get_format_adapter(platform, content_type)
+        adapter = self._adapter_for_draft_generation(platform, content_type, reddit_community, reddit_rules)
+        strict_model_generation = self._requires_live_model_generation(brief.organization_id)
         drafts = generate_drafts(
             self.profiles[brief.organization_id],
             brief,
@@ -1471,16 +1625,30 @@ class DataStore:
                 "brief_id": brief.id,
                 "platform": platform,
                 "content_type": content_type,
+                "reddit_community": reddit_community,
+                "reddit_rules": reddit_rules,
             },
         )
+        if strict_model_generation and (model_log.status != ModelCallStatus.succeeded or model_log.provider == "deterministic" or not model_output):
+            provider_detail = f" Provider detail: {model_log.error_message}" if model_log.error_message else ""
+            raise RuntimeError(
+                f"Live model draft generation failed for {model_log.provider}. "
+                f"No deterministic or adapter fallback draft was saved.{provider_detail}"
+            )
+        rejected_model_drafts: list[str] = []
+        accepted_model_drafts: list[Draft] = []
+        model_variants = model_output.variants if model_output and model_output.variants else []
         for draft_index, draft in enumerate(drafts):
             draft.generation_metadata["model_provider"] = model_log.provider
             draft.generation_metadata["model"] = model_log.model
             draft.generation_metadata["model_call_id"] = model_log.id
             draft.generation_metadata["model_prompt_version"] = model_log.prompt_version
             draft.generation_metadata["embedding_provider"] = self.embedding_provider_for_org(brief.organization_id).provider_name
-            if model_output and model_output.variants:
-                recommendation = model_output.variants[min(draft_index, len(model_output.variants) - 1)]
+            if model_variants:
+                if strict_model_generation and draft_index >= len(model_variants):
+                    rejected_model_drafts.append(f"variant_{draft_index + 1}: missing_model_variant")
+                    continue
+                recommendation = model_variants[min(draft_index, len(model_variants) - 1)]
                 draft.generation_metadata["model_recommendation"] = recommendation.model_dump(mode="json")
                 if model_log.provider != "deterministic":
                     validated = self._validated_model_draft_variant(
@@ -1501,18 +1669,48 @@ class DataStore:
                         draft.source_map = {claim.text: claim.supporting_chunk_ids for claim in draft.claims if claim.supporting_chunk_ids}
                         draft.generation_metadata["body_source"] = "model_recommendation"
                         draft.generation_metadata["model_sanitization"] = validated["notes"]
+                        accepted_model_drafts.append(draft)
                     else:
                         draft.generation_metadata["body_source"] = "adapter_render"
+                        rejection_reasons = self._model_draft_validation_reasons(
+                            recommendation.model_dump(mode="json"),
+                            adapter,
+                            self.profiles[brief.organization_id],
+                            brief,
+                            opportunity,
+                        )
                         draft.generation_metadata["model_rejection_reason"] = "Model draft was generic, ungrounded, or not valid for the requested platform format."
+                        draft.generation_metadata["model_rejection_reasons"] = rejection_reasons
+                        if strict_model_generation:
+                            rejected_model_drafts.append(f"variant_{draft_index + 1}: {', '.join(rejection_reasons) or 'unknown'}")
                 else:
                     draft.generation_metadata["body_source"] = "adapter_render"
+                    if strict_model_generation:
+                        rejected_model_drafts.append(f"variant_{draft_index + 1}: deterministic_provider")
+        if strict_model_generation and not accepted_model_drafts:
+            raise RuntimeError(
+                "Live model draft output was rejected by platform/source-grounding validation "
+                f"for {', '.join(rejected_model_drafts)}. No fallback draft was saved."
+            )
+        if strict_model_generation:
+            drafts = accepted_model_drafts
+        for draft in drafts:
             self.drafts[draft.id] = draft
         self.log(brief.organization_id, "drafts.generated", "brief", brief.id, {"count": len(drafts)}, actor_id)
         return drafts
 
     def regenerate_drafts_for_draft(self, draft_id: str, actor_id: str = "local_user") -> list[Draft]:
         draft = self.get_draft(draft_id)
-        drafts = self.generate_drafts(draft.content_brief_id, draft.platform, draft.content_type, actor_id)
+        metadata = draft.generation_metadata.get("metadata", {}) if isinstance(draft.generation_metadata.get("metadata"), dict) else {}
+        reddit_rules = metadata.get("community_rules", [])
+        drafts = self.generate_drafts(
+            draft.content_brief_id,
+            draft.platform,
+            draft.content_type,
+            actor_id,
+            str(metadata.get("target_community", "")),
+            "\n".join(str(rule) for rule in reddit_rules) if isinstance(reddit_rules, list) else str(reddit_rules or ""),
+        )
         self.log(
             draft.organization_id,
             "draft.regenerated",
@@ -1522,6 +1720,17 @@ class DataStore:
             actor_id,
         )
         return drafts
+
+    def _adapter_for_draft_generation(
+        self,
+        platform: str,
+        content_type: str,
+        reddit_community: str = "",
+        reddit_rules: str = "",
+    ) -> FormatAdapter:
+        if platform == "reddit" and content_type == "post":
+            return RedditPostAdapter(reddit_community, reddit_rules)
+        return self.get_format_adapter(platform, content_type)
 
     def update_draft_body(self, draft_id: str, body: str, actor_id: str = "local_user") -> Draft:
         draft = self.get_draft(draft_id)
@@ -1694,12 +1903,19 @@ class DataStore:
             raise ApprovalBlockedError("Draft must be approved before publishing.")
 
         integration = self.get_linkedin_integration(draft.organization_id)
+        connection = self.get_publishing_connection(draft.organization_id, PublishingProvider.linkedin)
+        publisher_name = getattr(self.linkedin_publisher, "provider_name", "")
+        legacy_local_connection = publisher_name == "linkedin-local" and integration.oauth_status == "validated"
+        if not legacy_local_connection and (connection.oauth_status != "validated" or not connection.access_token_configured):
+            raise ApprovalBlockedError("Connect LinkedIn before publishing.")
+        if connection.selected_target_type and connection.selected_target_type != "company_page":
+            raise ApprovalBlockedError("LinkedIn company page publishing requires a company page connection.")
         page_urn = payload.page_urn or integration.selected_page_urn
         page_name = payload.page_name or integration.selected_page_name
         if not page_urn:
             raise ApprovalBlockedError("Select a LinkedIn company page before publishing.")
 
-        result = self.linkedin_publisher.publish_company_post(draft, payload, page_urn, page_name)
+        result = self.linkedin_publisher.publish_company_post(draft, payload, page_urn, page_name, connection.access_token)
         draft.publish_result = result.model_dump(mode="json")
         draft.updated_at = now_utc()
 
@@ -2285,6 +2501,29 @@ class DataStore:
             return None
         return {"hook": hook, "body": body, "hashtags": hashtags, "notes": notes}
 
+    def _model_draft_validation_reasons(
+        self,
+        recommendation: dict[str, Any],
+        adapter: FormatAdapter,
+        profile: CompanyProfile,
+        brief: ContentBrief,
+        opportunity: ContentOpportunity,
+    ) -> list[str]:
+        raw_hook = str(recommendation.get("hook") or "").strip()
+        raw_body = str(recommendation.get("body") or "").strip()
+        raw_hashtags = recommendation.get("hashtags") or []
+        hashtags = [str(tag).strip() for tag in raw_hashtags if str(tag).strip()]
+        if not raw_body:
+            return ["empty_body"]
+        hook, body, hashtags, _notes = self._sanitize_model_draft_for_platform(
+            raw_hook,
+            raw_body,
+            hashtags,
+            adapter.platform,
+            adapter.content_type,
+        )
+        return self._model_draft_rejection_reasons(hook, body, hashtags, adapter, profile, brief, opportunity)
+
     def _sanitize_model_draft_for_platform(
         self,
         hook: str,
@@ -2321,12 +2560,35 @@ class DataStore:
                 clean = self._replace_labeled_heading(clean, "Caption", "")
                 clean = self._replace_labeled_heading(clean, "Trust cue", "The trust comes from the proof: ")
                 clean = re.sub(r"(?im)^\s*Hashtags?:.*$", "", clean)
+                clean = self._split_instagram_caption_paragraphs(clean)
                 notes.append("Removed Instagram planning labels from visible caption.")
 
         clean = re.sub(r"[ \t]+\n", "\n", clean).strip()
         clean = re.sub(r"\n{3,}", "\n\n", clean)
         hook = hook or extracted_title or self._first_meaningful_line(clean)
         return hook.strip()[:180], clean, hashtags, notes
+
+    def _split_instagram_caption_paragraphs(self, body: str) -> str:
+        if "\n\n" in body or len(body.split()) <= 38:
+            return body
+        sentences = [sentence.strip() for sentence in re.split(r"(?<=[.!?])\s+", body) if sentence.strip()]
+        if len(sentences) <= 1:
+            return body
+        paragraphs: list[str] = []
+        current: list[str] = []
+        current_words = 0
+        for sentence in sentences:
+            sentence_words = len(sentence.split())
+            if current and current_words + sentence_words > 28:
+                paragraphs.append(" ".join(current))
+                current = [sentence]
+                current_words = sentence_words
+            else:
+                current.append(sentence)
+                current_words += sentence_words
+        if current:
+            paragraphs.append(" ".join(current))
+        return "\n\n".join(paragraphs) if len(paragraphs) > 1 else body
 
     def _extract_labeled_value(self, body: str, label: str) -> str | None:
         match = re.search(rf"(?im)^\s*{re.escape(label)}\s*:\s*(.+?)\s*$", body)
@@ -2390,6 +2652,9 @@ class DataStore:
             reasons.append("forbidden_phrase")
 
         if adapter.platform == "reddit":
+            target_community = getattr(adapter, "target_community", "")
+            if target_community and target_community.lower() not in combined:
+                reasons.append("reddit_missing_target_community")
             if hashtags or "#" in body:
                 reasons.append("reddit_hashtags")
             if any(marker in lowered for marker in ["visual direction:", "caption:", "linkedin", "company post"]):
@@ -2436,6 +2701,50 @@ class DataStore:
                 reasons.append("instagram_visible_planning_label")
             if adapter.content_type == "post" and "\n\n" not in body and len(body.split()) > 38:
                 reasons.append("instagram_long_single_paragraph")
+            first_sentence = re.split(r"(?<=[.!?])\s+", body.strip(), maxsplit=1)[0].strip().lower()
+            company_bio_opening = re.match(r"^[a-z0-9][\w .&'-]{1,55}\s+is\s+(?:a|an|the)\s+", first_sentence)
+            company_bio_markers = [
+                "builder-first ai ecosystem",
+                "we build active products",
+                "it helps teams",
+                "with human approval before publishing",
+                "secure, source-grounded communication agent",
+            ]
+            if adapter.content_type == "post" and (company_bio_opening or any(marker in lowered for marker in company_bio_markers)):
+                reasons.append("instagram_company_bio_copy")
+            corporate_voice_markers = [
+                " offers ",
+                " offer ",
+                " is designed for ",
+                " designed for ",
+                " foundational to ",
+                " mission to ",
+                "production-ready products",
+                "dedicated library",
+                "journey from concept to deployment",
+                "provides guidance",
+                "provide guidance",
+                "build with confidence",
+                "significant project",
+                "demands clarity",
+            ]
+            if adapter.content_type == "post" and any(marker in lowered for marker in corporate_voice_markers):
+                reasons.append("instagram_corporate_blurb")
+            brand_terms = sorted(
+                {
+                    term.lower()
+                    for term in re.findall(r"\b[A-Z][A-Za-z0-9]*(?:\s+[A-Z][A-Za-z0-9]*){0,2}\b", " ".join([brief.key_message, *brief.supporting_points]))
+                    if len(term) > 3 and term.lower() not in {"true", "this", "that", "every", "meaningful", "python first principles"}
+                },
+                key=len,
+                reverse=True,
+            )
+            brand_mentions = sum(lowered.count(term) for term in brand_terms[:3])
+            body_lines = [line.strip() for line in body.splitlines() if line.strip()]
+            if adapter.content_type == "post" and brand_mentions > 2:
+                reasons.append("instagram_too_brand_heavy")
+            if adapter.content_type == "post" and body_lines and any(body_lines[-1].lower().startswith(term) for term in brand_terms[:3]):
+                reasons.append("instagram_brand_led_closing")
             normalized_key_message = re.sub(r"\W+", " ", brief.key_message).strip().lower()
             normalized_lines = {re.sub(r"\W+", " ", line).strip().lower() for line in body.splitlines()}
             if adapter.content_type == "post" and normalized_key_message and normalized_key_message in normalized_lines:
@@ -2531,7 +2840,7 @@ class DataStore:
             "Platform specifics:\n"
             "- LinkedIn company post: hook in the hook field; body uses 3-6 short public paragraphs, a trust-building detail, and a practical takeaway. Do not include section headings.\n"
             "- Reddit post: hook is the Reddit title; body reads like a community discussion with practical context, a source-backed detail, and one honest question. No markdown headline in the body, no hashtags, no sales tone, no invented first-person experience, no 'what's your experience' engagement bait, no corporate announcement voice, and no subreddit-fit notes.\n"
-            "- Instagram post: body is the public caption only. Do not include Visual direction, Post copy, Caption, or Hashtags labels. Use short lines, a clear hook, one proof/trust sentence, and put hashtags only in the hashtags array. Do not summarize a blog post in one paragraph, do not start with the source title, and avoid phrases like 'our latest blog post explores' or 'At {brand}, we believe'.\n"
+            "- Instagram post: body is the public caption only. Do not include Visual direction, Post copy, Caption, or Hashtags labels. Use short lines, a clear hook, one proof/trust sentence, and put hashtags only in the hashtags array. It must sound like an Instagram caption, not a company bio, product directory, website blurb, SaaS brochure, or mission statement. Do not open with '[Company] is...', 'We build...', 'It helps...', or a chain of product-description sentences. Avoid corporate phrases like 'offers', 'designed for', 'foundational to', 'mission to', 'production-ready products', 'journey from concept to deployment', 'provides guidance', 'build with confidence', and 'significant project'. Use this shape: line 1 is a human hook under 11 words; lines 2-4 name the tension in plain language; one short proof line names the source-backed detail; final line is a takeaway or soft question that does not start with the brand name. Mention the brand at most once in the body. Do not summarize a blog post in one paragraph, do not start with the source title, and avoid phrases like 'our latest blog post explores' or 'At {brand}, we believe'.\n"
             f"Evidence:\n{evidence[:2200]}"
         )
 

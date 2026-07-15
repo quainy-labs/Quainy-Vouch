@@ -205,9 +205,15 @@ export function createStudioActions(state: WorkspaceControllerState, options: St
   async function generateDraftsFromBrief() {
     if (!state.selectedBrief) return;
     if (!options.requirePermission(options.canEditContent, options.knowledgePermissionMessage)) return;
+    if (state.formatChoice === "reddit_post" && !state.redditCommunity.trim()) {
+      state.setNotice("Add the target Reddit community before generating Reddit drafts.");
+      return;
+    }
     state.setBusy(true);
     try {
-      const params = formatChoiceParams(state.formatChoice);
+      const params = formatChoiceParams(state.formatChoice, {
+        redditCommunity: state.redditCommunity,
+      });
       const result = await api<{ drafts: Draft[] }>(`/briefs/${state.selectedBrief.id}/drafts${params}`, { method: "POST" });
       state.setDrafts(result.drafts);
       state.setSelectedDraft(result.drafts[0] ?? null);

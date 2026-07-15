@@ -26,6 +26,7 @@ import type {
   Opportunity,
   PostMemory,
   PreferenceSuggestion,
+  PublishingConnection,
   SetupForm,
   SetupSection,
   SourceForm,
@@ -75,6 +76,7 @@ export function useWorkspaceControllerState() {
   const [scheduleFor, setScheduleFor] = useState("");
   const [calendarItems, setCalendarItems] = useState<Draft[]>([]);
   const [linkedinIntegration, setLinkedinIntegration] = useState<LinkedInIntegration | null>(null);
+  const [publishingConnections, setPublishingConnections] = useState<PublishingConnection[]>([]);
   const [knowledgeReadiness, setKnowledgeReadiness] = useState<KnowledgeReadiness | null>(null);
   const [memoryItems, setMemoryItems] = useState<PostMemory[]>([]);
   const [analyticsDashboard, setAnalyticsDashboard] = useState<AnalyticsDashboard | null>(null);
@@ -94,6 +96,7 @@ export function useWorkspaceControllerState() {
   const [trendSignals, setTrendSignals] = useState<TrendSignal[]>([]);
   const [calendarEventForm, setCalendarEventForm] = useState<CalendarEventForm>(emptyCalendarEventForm);
   const [trendSignalForm, setTrendSignalForm] = useState<TrendSignalForm>(emptyTrendSignalForm);
+  const [redditCommunity, setRedditCommunity] = useState("");
   const [formatChoice, setFormatChoice] = useState<FormatChoice>("linkedin_post");
   const [activeView, setActiveView] = useState<WorkspaceView>("studio");
   const [setupSection, setSetupSection] = useState<SetupSection>("company");
@@ -169,6 +172,8 @@ export function useWorkspaceControllerState() {
     setCalendarItems,
     linkedinIntegration,
     setLinkedinIntegration,
+    publishingConnections,
+    setPublishingConnections,
     knowledgeReadiness,
     setKnowledgeReadiness,
     memoryItems,
@@ -207,6 +212,8 @@ export function useWorkspaceControllerState() {
     setCalendarEventForm,
     trendSignalForm,
     setTrendSignalForm,
+    redditCommunity,
+    setRedditCommunity,
     formatChoice,
     setFormatChoice,
     activeView,

@@ -1,14 +1,17 @@
 import pytest
 
+import openai
 from app.prompt_registry import prompt_versions
 from app.publishing import LinkedInPublishingAdapter, build_linkedin_publisher
 from app.providers import (
     DeterministicModelProvider,
+    GeminiModelProvider,
     LocalHashEmbeddingProvider,
     OpenAIEmbeddingProvider,
     OpenAIModelProvider,
     build_embedding_provider,
     build_model_provider,
+    resolve_secret_reference,
 )
 
 
@@ -30,6 +33,7 @@ def test_prompt_registry_returns_known_versions():
 
 
 def test_model_provider_factory_defaults_to_deterministic(monkeypatch):
+    monkeypatch.delenv("VOUCH_MODEL_PROVIDER", raising=False)
     monkeypatch.delenv("QUAINY_MODEL_PROVIDER", raising=False)
 
     provider = build_model_provider()
@@ -41,7 +45,7 @@ def test_model_provider_factory_defaults_to_deterministic(monkeypatch):
 
 
 def test_model_provider_factory_can_select_openai_without_live_call(monkeypatch):
-    monkeypatch.setenv("QUAINY_MODEL_PROVIDER", "openai")
+    monkeypatch.setenv("VOUCH_MODEL_PROVIDER", "openai")
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
 
     provider = build_model_provider()
@@ -63,8 +67,140 @@ def test_model_provider_factory_can_select_openai_compatible_without_live_call()
     assert provider.model == "company-model"
 
 
+def test_model_provider_factory_can_select_gemini_without_live_call():
+    provider = build_model_provider("gemini", model="gemini-test-model", api_key="gemini-test-key")
+
+    assert isinstance(provider, GeminiModelProvider)
+    assert provider.provider_name == "gemini"
+    assert provider.model == "gemini-test-model"
+
+
+def test_secret_reference_can_fall_back_to_dotenv(monkeypatch, tmp_path):
+    env_path = tmp_path / ".env"
+    env_path.write_text("XAI_API_KEY='xai-test-key'\n", encoding="utf-8")
+    monkeypatch.delenv("XAI_API_KEY", raising=False)
+    monkeypatch.setattr("app.providers.DOTENV_PATH", env_path)
+
+    assert resolve_secret_reference("XAI_API_KEY") == "xai-test-key"
+
+
+def test_openai_compatible_generation_uses_chat_response_format(monkeypatch):
+    calls = []
+
+    class Message:
+        content = '{"ok": true}'
+
+    class Choice:
+        message = Message()
+
+    class Usage:
+        prompt_tokens = 3
+        completion_tokens = 2
+        total_tokens = 5
+
+    class ChatCompletions:
+        def create(self, **kwargs):
+            calls.append(kwargs)
+            return type(
+                "ChatResponse",
+                (),
+                {
+                    "id": "chat-response-id",
+                    "choices": [Choice()],
+                    "usage": Usage(),
+                },
+            )()
+
+    class Chat:
+        completions = ChatCompletions()
+
+    class FakeOpenAI:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+            self.chat = Chat()
+
+    monkeypatch.setattr(openai, "OpenAI", FakeOpenAI)
+    provider = build_model_provider(
+        "openai_compatible",
+        model="grok-4",
+        base_url="https://api.x.ai/v1",
+        api_key="xai-test-key",
+    )
+
+    result = provider.generate_structured(
+        "Confirm connectivity.",
+        "AIProviderConnectionTest",
+        {
+            "type": "object",
+            "properties": {"ok": {"type": "boolean"}},
+            "required": ["ok"],
+            "additionalProperties": False,
+        },
+    )
+
+    assert result.output == {"ok": True}
+    assert result.token_usage == {"input_tokens": 3, "output_tokens": 2, "total_tokens": 5}
+    assert calls[0]["model"] == "grok-4"
+    assert calls[0]["response_format"] == {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "AIProviderConnectionTest",
+            "schema": {
+                "type": "object",
+                "properties": {"ok": {"type": "boolean"}},
+                "required": ["ok"],
+                "additionalProperties": False,
+            },
+            "strict": True,
+        },
+    }
+
+
+def test_gemini_generation_uses_native_generate_content(monkeypatch):
+    calls = []
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            return False
+
+        def read(self):
+            return (
+                '{"candidates":[{"content":{"parts":[{"text":"{\\\"ok\\\":true}"}]}}],'
+                '"usageMetadata":{"promptTokenCount":3,"candidatesTokenCount":2,"totalTokenCount":5}}'
+            ).encode("utf-8")
+
+    def fake_urlopen(request, timeout):
+        calls.append((request, timeout))
+        return FakeResponse()
+
+    monkeypatch.setattr("app.providers.urllib.request.urlopen", fake_urlopen)
+    provider = build_model_provider("gemini", model="gemini-test-model", api_key="gemini-test-key")
+
+    result = provider.generate_structured(
+        "Confirm connectivity.",
+        "AIProviderConnectionTest",
+        {
+            "type": "object",
+            "properties": {"ok": {"type": "boolean"}},
+            "required": ["ok"],
+            "additionalProperties": False,
+        },
+    )
+
+    request, timeout = calls[0]
+    assert result.output == {"ok": True}
+    assert result.token_usage == {"input_tokens": 3, "output_tokens": 2, "total_tokens": 5}
+    assert timeout == 90
+    assert request.full_url.startswith("https://generativelanguage.googleapis.com/v1beta/models/gemini-test-model:generateContent")
+    assert b"responseMimeType" in request.data
+    assert b"AIProviderConnectionTest" in request.data
+
+
 def test_embedding_provider_factory_is_configurable(monkeypatch):
-    monkeypatch.setenv("QUAINY_EMBEDDING_PROVIDER", "local_hash")
+    monkeypatch.setenv("VOUCH_EMBEDDING_PROVIDER", "local_hash")
 
     provider = build_embedding_provider()
 
@@ -82,6 +218,7 @@ def test_embedding_provider_factory_can_select_local_openai_compatible_without_l
 
 
 def test_linkedin_publishing_provider_defaults_to_local(monkeypatch):
+    monkeypatch.delenv("VOUCH_LINKEDIN_PUBLISHING_PROVIDER", raising=False)
     monkeypatch.delenv("QUAINY_LINKEDIN_PUBLISHING_PROVIDER", raising=False)
 
     provider = build_linkedin_publisher()

@@ -119,7 +119,7 @@ class RedditPostAdapter:
     adapter_name = "reddit_post"
     adapter_version = "1.0.0"
     prompt_version = prompt_versions.version("reddit_post")
-    rules = [
+    base_rules = [
         "Render as a Reddit post where the hook field is the title and the body reads like a real community post.",
         "Use community-aware, non-promotional language.",
         "Avoid hashtags, markdown headline formatting, corporate announcement tone, hard selling, and visible planning labels.",
@@ -127,6 +127,15 @@ class RedditPostAdapter:
         "Preserve only source-backed claims from the platform-independent brief.",
         "Share a specific situation, what the source-backed detail changes, and one honest discussion question.",
     ]
+
+    def __init__(self, target_community: str = "", community_rules: str = "") -> None:
+        self.target_community = normalize_reddit_community(target_community)
+        self.community_rules = normalize_reddit_rules(community_rules) or infer_reddit_rules(self.target_community)
+        self.rules = list(self.base_rules)
+        if self.target_community:
+            self.rules.append(f"Target the post to {self.target_community} and mention that community naturally in the visible body.")
+        if self.community_rules:
+            self.rules.append(f"Follow these target-community rules: {'; '.join(self.community_rules)}")
 
     def generation_spec(self, brief: ContentBrief) -> DraftGenerationSpec:
         return DraftGenerationSpec(
@@ -143,6 +152,8 @@ class RedditPostAdapter:
                 "visible_body_contract": "community post body only; no markdown headline, Title/Subreddit fit/Post body labels, or promotional copy",
                 "structure": "practical context, source-backed detail, tradeoff, honest discussion question",
                 "avoid": "hashtags, sales copy, invented first-person story, corporate announcement tone, generic engagement bait",
+                "target_community": self.target_community,
+                "community_rules": self.community_rules,
             },
         )
 
@@ -165,14 +176,15 @@ class RedditPostAdapter:
         tradeoff = reddit_tradeoff_from_context(brief.key_message, " ".join(supporting))
         audience = concise_audience(brief.audience or profile.audience)
         title = reddit_title_from_brief(brief.key_message)
+        community = self.target_community or "this community"
         if variant.style == "caution":
-            opening = "A lab is useful when it makes the tradeoffs visible, not when it promises a shortcut."
+            opening = f"For {community}, this only feels useful if the tradeoffs are visible, not packaged as a shortcut."
             question = "What would you want a beginner-facing lab to prove before you would trust it?"
         elif variant.style == "practical":
-            opening = f"For {audience}, the interesting part is whether the exercise helps people reason through the work, not just finish it."
+            opening = f"For {community}, the interesting part is whether this helps {audience} reason through the work, not just finish it."
             question = "Where do you usually draw the line between moving fast and understanding the tradeoff?"
         else:
-            opening = "This kind of exercise seems most useful when it turns tradeoffs into something a learner can inspect."
+            opening = f"In {community}, this kind of exercise seems most useful when it turns tradeoffs into something a learner can inspect."
             question = "What makes a lab stick for you: seeing internals, writing tests, debugging failure cases, or building a capstone?"
 
         body_parts = [
@@ -201,6 +213,10 @@ class RedditPostAdapter:
             checks.append("Avoids source-dump wording in visible Reddit copy.")
         if not re.search(r"\b[12]\.\s+[A-Z]", body):
             checks.append("Avoids truncated numbered-list source fragments.")
+        if self.target_community and self.target_community.lower() in body.lower():
+            checks.append(f"Names the target Reddit community: {self.target_community}.")
+        elif self.target_community:
+            checks.append(f"Review community fit; expected visible mention of {self.target_community}.")
         if has_unsupported_metric(body, brief):
             checks.append("Review any metric-like claim; Reddit post rules prohibit unsupported numbers or growth claims.")
         return checks
@@ -213,6 +229,34 @@ def has_unsupported_metric(body: str, brief: ContentBrief) -> bool:
         return False
     approved_context = " ".join([*brief.claims, *brief.supporting_points]).lower()
     return not any(marker in approved_context for marker in metric_markers)
+
+
+def normalize_reddit_community(value: str) -> str:
+    clean = re.sub(r"\s+", "", value.strip())
+    clean = clean.removeprefix("https://www.reddit.com/").removeprefix("https://reddit.com/")
+    clean = clean.strip("/")
+    if clean.lower().startswith("r/"):
+        clean = clean[2:]
+    clean = re.sub(r"[^A-Za-z0-9_]", "", clean)
+    return f"r/{clean}" if clean else ""
+
+
+def normalize_reddit_rules(value: str) -> list[str]:
+    return [
+        re.sub(r"\s+", " ", item).strip(" -•")
+        for item in re.split(r"[\n;]+", value)
+        if re.sub(r"\s+", " ", item).strip(" -•")
+    ][:6]
+
+
+def infer_reddit_rules(target_community: str) -> list[str]:
+    if not target_community:
+        return []
+    return [
+        f"Follow {target_community} rules and posting norms",
+        "Avoid self-promotion unless the community explicitly allows it",
+        "Keep the post useful, specific, and discussion-oriented",
+    ]
 
 
 def clean_public_sentence(text: str, max_chars: int) -> str:

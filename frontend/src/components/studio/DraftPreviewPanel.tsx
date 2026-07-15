@@ -31,7 +31,7 @@ export function DraftPreviewPanel({
       <div className="section-heading">
         <div>
           <p className="eyebrow">Preview</p>
-          <h2>{platformDisplayName(draft.platform)} artifact</h2>
+          <h2>{draftFormatLabel(draft)}</h2>
         </div>
         <span className="platform-count">{contentTypeDisplayName(draft.content_type)}</span>
       </div>

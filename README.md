@@ -4,7 +4,7 @@
 [![License](https://img.shields.io/github/license/quainy-labs/Quainy-Vouch?style=for-the-badge)](./LICENSE)
 
 
-Quainy Vouch is a source-grounded content workspace for teams that need public communication to stay accurate, reviewable, and tied to approved company knowledge.
+Quainy Vouch is a source-grounded content workspace for any organization that needs public communication to stay accurate, reviewable, and tied to approved company knowledge.
 
 It helps a team move from trusted sources to opportunities, briefs, drafts, review, scheduling, and learning signals. It is not an autonomous publisher and it is not a broad internal crawler.
 
@@ -89,18 +89,51 @@ docker compose up --build
 
 ## Important Environment Flags
 
-- `QUAINY_DATA_BACKEND=postgres` enables PostgreSQL-backed persistence.
-- `QUAINY_MODEL_PROVIDER=deterministic` uses deterministic generation.
-- `QUAINY_EMBEDDING_PROVIDER=local_hash` uses local hash embeddings.
-- `QUAINY_LINKEDIN_PUBLISHING_PROVIDER=local` uses the credential-free local publishing adapter.
+- `VOUCH_DATA_BACKEND=postgres` enables PostgreSQL-backed persistence.
+- `VOUCH_MODEL_PROVIDER=deterministic` uses deterministic generation.
+- `VOUCH_EMBEDDING_PROVIDER=local_hash` uses local hash embeddings.
+- `VOUCH_LINKEDIN_PUBLISHING_PROVIDER=local` uses the credential-free local publishing adapter.
+
+Legacy `QUAINY_*` environment names are still accepted as fallbacks for existing local setups, but new deployments should use the neutral `VOUCH_*` names.
 
 See `.env.example` for the full local configuration.
+
+## AI Providers
+
+The default setup is deterministic and does not require model credentials. Organization AI settings in the app support:
+
+- Deterministic fallback.
+- Local runtimes, configured separately for generation and embeddings.
+- Cloud LLM providers through editable model, base URL, and secret-reference fields.
+
+The AI settings panel stores environment variable names such as `OPENAI_API_KEY`, not raw secret values.
+
+## Publishing Connections
+
+Publishing settings use OAuth-style connector buttons for LinkedIn, Reddit, and Instagram.
+
+Required OAuth environment variables:
+
+- LinkedIn: `LINKEDIN_CLIENT_ID`, `LINKEDIN_CLIENT_SECRET`, `LINKEDIN_REDIRECT_URI`
+- Reddit: `REDDIT_CLIENT_ID`, `REDDIT_CLIENT_SECRET`, `REDDIT_REDIRECT_URI`
+- Instagram: `INSTAGRAM_CLIENT_ID`, `INSTAGRAM_CLIENT_SECRET`, `INSTAGRAM_REDIRECT_URI`
+
+Optional scope/version overrides:
+
+- `LINKEDIN_SCOPES`
+- `REDDIT_SCOPES`
+- `INSTAGRAM_SCOPES`
+- `META_OAUTH_VERSION`
+
+LinkedIn publishing is company-page first. The OAuth callback attempts to select an organization/company page target. Personal-profile posting is secondary and should only be enabled through an explicit product flow.
+
+For local development, keep `VOUCH_LINKEDIN_PUBLISHING_PROVIDER=local`. For live LinkedIn API publishing, set `VOUCH_LINKEDIN_PUBLISHING_PROVIDER=api` and configure LinkedIn OAuth.
 
 ## Boundaries
 
 - No autonomous publishing by default.
 - No hidden broad workspace crawl.
-- No live LinkedIn OAuth flow by default.
+- OAuth tokens are stored server-side and are not returned in API responses.
 - Trends must connect to approved company context before becoming usable content.
 - Development fixtures are not production onboarding.
 - Raw secrets should stay in backend environment variables, not in UI payloads.

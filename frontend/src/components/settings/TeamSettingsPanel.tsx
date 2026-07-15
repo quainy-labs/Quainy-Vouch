@@ -113,29 +113,29 @@ export function TeamSettingsPanel({
                 inputMode="numeric"
               />
             </label>
-            <label className="check-field">
+            <label className="check-field policy-check-field">
+              <span>Require approval before export</span>
               <input
                 type="checkbox"
                 checked={approvalPolicyDraft.require_approval_before_export}
                 onChange={(event) => onApprovalPolicyDraftChange({ ...approvalPolicyDraft, require_approval_before_export: event.target.checked })}
               />
-              <span>Require approval before export</span>
             </label>
-            <label className="check-field">
+            <label className="check-field policy-check-field">
+              <span>Require approval before publish</span>
               <input
                 type="checkbox"
                 checked={approvalPolicyDraft.require_approval_before_publish}
                 onChange={(event) => onApprovalPolicyDraftChange({ ...approvalPolicyDraft, require_approval_before_publish: event.target.checked })}
               />
-              <span>Require approval before publish</span>
             </label>
-            <label className="check-field">
+            <label className="check-field policy-check-field">
+              <span>Allow logged risk override</span>
               <input
                 type="checkbox"
                 checked={approvalPolicyDraft.allow_risk_override}
                 onChange={(event) => onApprovalPolicyDraftChange({ ...approvalPolicyDraft, allow_risk_override: event.target.checked })}
               />
-              <span>Allow logged risk override</span>
             </label>
           </div>
         </div>
